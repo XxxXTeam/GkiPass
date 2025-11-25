@@ -15,7 +15,7 @@ require (
 	github.com/quic-go/quic-go v0.55.0
 	github.com/redis/go-redis/v9 v9.14.0
 	github.com/rs/cors v1.11.1
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.43.0
 	golang.org/x/oauth2 v0.32.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
