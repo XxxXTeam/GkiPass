@@ -84,7 +84,7 @@ jobs:
           fi
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gkipass-${{ matrix.target.suffix }}
           path: bin/gkipass-${{ matrix.target.suffix }}.*
@@ -121,7 +121,7 @@ jobs:
           tar czf ../gkipass-web.tar.gz .next public package.json next.config.ts
 
       - name: Upload web artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gkipass-web
           path: gkipass-web.tar.gz
