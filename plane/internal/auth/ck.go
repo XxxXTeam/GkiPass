@@ -6,10 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	dbinit "gkipass/plane/db/init"
-	"gkipass/plane/pkg/logger"
-
-	"go.uber.org/zap"
+	"gkipass/plane/internal/db/models"
 )
 
 // CKManager Connection Key 管理器
@@ -21,14 +18,16 @@ func NewCKManager() *CKManager {
 	return &CKManager{}
 }
 
-func GenerateCK() string {
+/*
+GenerateCK 生成加密安全的 Connection Key
+功能：使用 crypto/rand 生成 256 位熵的随机 CK，失败时返回 error 而非空字符串。
+*/
+func GenerateCK() (string, error) {
 	bytes := make([]byte, 32) // 32字节 = 64位hex
 	if _, err := rand.Read(bytes); err != nil {
-		logger.Error("生成CK失败", zap.Error(err))
-		return ""
+		return "", fmt.Errorf("CK 随机数生成失败: %w", err)
 	}
-
-	return "gkp_" + hex.EncodeToString(bytes)
+	return "gkp_" + hex.EncodeToString(bytes), nil
 }
 
 // ValidateCK 验证 CK 格式
@@ -50,45 +49,46 @@ func ValidateCK(ck string) error {
 	return nil
 }
 
-// CreateNodeCK 为节点创建 CK
-func CreateNodeCK(nodeID string, expiresIn time.Duration) *dbinit.ConnectionKey {
-	ck := GenerateCK()
-
-	return &dbinit.ConnectionKey{
-		ID:        GenerateID(),
-		Key:       ck,
+/* CreateNodeCK 为节点创建 CK，失败时返回 error 而非空 CK 对象 */
+func CreateNodeCK(nodeID string, expiresIn time.Duration) (*models.ConnectionKey, error) {
+	ck, err := GenerateCK()
+	if err != nil {
+		return nil, err
+	}
+	return &models.ConnectionKey{
 		NodeID:    nodeID,
-		Type:      "node",
-		ExpiresAt: time.Now().Add(expiresIn),
-		CreatedAt: time.Now(),
-	}
-}
-
-// CreateUserCK 为用户创建 CK
-func CreateUserCK(userID string, expiresIn time.Duration) *dbinit.ConnectionKey {
-	ck := GenerateCK()
-
-	return &dbinit.ConnectionKey{
-		ID:        GenerateID(),
 		Key:       ck,
-		NodeID:    userID, // 对于用户，复用 NodeID 字段存储 UserID
-		Type:      "user",
+		Type:      "node",
+		Label:     "node-ck",
 		ExpiresAt: time.Now().Add(expiresIn),
-		CreatedAt: time.Now(),
-	}
+	}, nil
 }
 
-// GenerateID 生成唯一ID
-func GenerateID() string {
+/* CreateUserCK 为用户创建 CK，失败时返回 error 而非空 CK 对象 */
+func CreateUserCK(userID string, expiresIn time.Duration) (*models.ConnectionKey, error) {
+	ck, err := GenerateCK()
+	if err != nil {
+		return nil, err
+	}
+	return &models.ConnectionKey{
+		NodeID:    userID,
+		Key:       ck,
+		Type:      "user",
+		Label:     "user-ck",
+		ExpiresAt: time.Now().Add(expiresIn),
+	}, nil
+}
+
+/* GenerateID 生成唯一 ID，失败时返回 error */
+func GenerateID() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		logger.Error("生成ID失败", zap.Error(err))
-		return ""
+		return "", fmt.Errorf("ID 随机数生成失败: %w", err)
 	}
-	return hex.EncodeToString(bytes)
+	return hex.EncodeToString(bytes), nil
 }
 
 // IsExpired 检查 CK 是否过期
-func IsExpired(ck *dbinit.ConnectionKey) bool {
+func IsExpired(ck *models.ConnectionKey) bool {
 	return time.Now().After(ck.ExpiresAt)
 }

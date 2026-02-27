@@ -327,7 +327,7 @@ func matchIP(ip, cidr string) bool {
 
 // matchProtocol 检查协议是否匹配
 func matchProtocol(protocol, ruleProtocol string) bool {
-	return strings.ToLower(protocol) == strings.ToLower(ruleProtocol)
+	return strings.EqualFold(protocol, ruleProtocol)
 }
 
 // matchPort 检查端口是否匹配

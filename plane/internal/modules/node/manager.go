@@ -4,53 +4,62 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"gkipass/plane/db"
-	dbinit "gkipass/plane/db/init"
+	"gkipass/plane/internal/db/dao"
+	dbmodels "gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/models"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
 // Manager 节点管理器
 type Manager struct {
-	db *db.Manager
+	dao *dao.DAO
 }
 
 // NewManager 创建节点管理器
-func NewManager(dbManager *db.Manager) *Manager {
-	return &Manager{db: dbManager}
+func NewManager(d *dao.DAO) *Manager {
+	return &Manager{dao: d}
 }
 
 // GetNodeConfig 获取节点完整配置
 func (m *Manager) GetNodeConfig(nodeID string) (*models.NodeConfig, error) {
+	if m.dao == nil {
+		return nil, fmt.Errorf("DAO 不可用")
+	}
+
 	// 1. 获取节点信息
-	node, err := m.db.DB.SQLite.GetNode(nodeID)
-	if err != nil || node == nil {
+	ndNode, err := m.dao.GetNode(nodeID)
+	if err != nil || ndNode == nil {
 		return nil, fmt.Errorf("节点不存在: %s", nodeID)
 	}
 
-	// 2. 获取节点组信息
-	group, err := m.db.DB.SQLite.GetNodeGroup(node.GroupID)
-	if err != nil || group == nil {
-		return nil, fmt.Errorf("节点组不存在: %s", node.GroupID)
+	// 2. 获取第一个节点组
+	groupID := ""
+	groupName := ""
+	if len(ndNode.Groups) > 0 {
+		groupID = ndNode.Groups[0].ID
+		groupName = ndNode.Groups[0].Name
 	}
 
 	// 3. 获取该节点组的所有隧道
-	tunnels, err := m.db.DB.SQLite.GetTunnelsByGroupID(node.GroupID, node.Type)
-	if err != nil {
-		logger.Error("获取隧道列表失败", zap.Error(err))
-		tunnels = []*dbinit.Tunnel{} // 返回空列表
+	var tunnels []dbmodels.Tunnel
+	if groupID != "" {
+		var tErr error
+		tunnels, tErr = m.getTunnelsByGroupID(groupID)
+		if tErr != nil {
+			logger.Error("获取隧道列表失败", zap.Error(tErr))
+		}
 	}
 
 	// 4. 构建节点信息
 	nodeInfo := models.NodeInfo{
-		NodeID:    node.ID,
-		NodeName:  node.Name,
-		NodeType:  node.Type,
-		GroupID:   node.GroupID,
-		GroupName: group.Name,
-		Region:    node.Tags, // 可以从 tags 中解析
+		NodeID:    ndNode.ID,
+		NodeName:  ndNode.Name,
+		NodeType:  string(ndNode.Role),
+		GroupID:   groupID,
+		GroupName: groupName,
+		Region:    "",
 		Tags:      make(map[string]string),
 	}
 
@@ -58,28 +67,29 @@ func (m *Manager) GetNodeConfig(nodeID string) (*models.NodeConfig, error) {
 	tunnelConfigs := make([]models.TunnelConfig, 0, len(tunnels))
 	for _, tunnel := range tunnels {
 		if !tunnel.Enabled {
-			continue // 跳过未启用的隧道
-		}
-
-		// 解析目标列表
-		targets, err := m.parseTargets(tunnel.Targets)
-		if err != nil {
-			logger.Warn("解析目标列表失败",
-				zap.String("tunnelID", tunnel.ID),
-				zap.Error(err))
 			continue
 		}
+
+		/* 构建目标列表 */
+		targets := []models.TargetConfig{{
+			Host:       tunnel.TargetAddress,
+			Port:       tunnel.TargetPort,
+			Weight:     1,
+			Protocol:   "tcp",
+			Timeout:    30,
+			MaxRetries: 3,
+		}}
 
 		tunnelConfig := models.TunnelConfig{
 			TunnelID:          tunnel.ID,
 			Name:              tunnel.Name,
-			Protocol:          tunnel.Protocol,
-			LocalPort:         tunnel.LocalPort,
+			Protocol:          string(tunnel.Protocol),
+			LocalPort:         tunnel.ListenPort,
 			Targets:           targets,
 			Enabled:           tunnel.Enabled,
-			DisabledProtocols: []string{}, // 可以从数据库扩展
-			MaxBandwidth:      0,          // 可以从套餐限制获取
-			MaxConnections:    0,          // 可以从套餐限制获取
+			DisabledProtocols: []string{},
+			MaxBandwidth:      tunnel.RateLimitBPS,
+			MaxConnections:    tunnel.MaxConnections,
 			Options:           make(map[string]interface{}),
 		}
 
@@ -87,7 +97,7 @@ func (m *Manager) GetNodeConfig(nodeID string) (*models.NodeConfig, error) {
 	}
 
 	// 6. 获取对端服务器列表
-	peerServers := m.getPeerServers(node.Type, node.GroupID)
+	peerServers := m.getPeerServers(string(ndNode.Role), groupID)
 
 	// 7. 构建节点能力配置
 	capability := models.NodeCapability{
@@ -111,7 +121,7 @@ func (m *Manager) GetNodeConfig(nodeID string) (*models.NodeConfig, error) {
 		PeerServers:  peerServers,
 		Capabilities: capability,
 		Version:      "1.0.0",
-		UpdatedAt:    node.UpdatedAt,
+		UpdatedAt:    ndNode.UpdatedAt,
 	}
 
 	logger.Info("生成节点配置",
@@ -121,51 +131,62 @@ func (m *Manager) GetNodeConfig(nodeID string) (*models.NodeConfig, error) {
 	return config, nil
 }
 
-// parseTargets 解析目标列表
-func (m *Manager) parseTargets(targetsJSON string) ([]models.TargetConfig, error) {
+/*
+getTunnelsByGroupID 获取节点组关联的隧道
+*/
+func (m *Manager) getTunnelsByGroupID(groupID string) ([]dbmodels.Tunnel, error) {
+	var tunnels []dbmodels.Tunnel
+	err := m.dao.DB.Where(
+		"(ingress_group_id = ? OR egress_group_id = ?) AND enabled = ?",
+		groupID, groupID, true,
+	).Find(&tunnels).Error
+	return tunnels, err
+}
+
+// parseTargetsJSON 解析目标 JSON
+func (m *Manager) parseTargetsJSON(targetsJSON string) ([]models.TargetConfig, error) {
 	if targetsJSON == "" {
 		return []models.TargetConfig{}, nil
 	}
 
-	// 从 JSON 解析
-	var dbTargets []dbinit.TunnelTarget
-	if err := json.Unmarshal([]byte(targetsJSON), &dbTargets); err != nil {
+	var raw []struct {
+		Host   string `json:"host"`
+		Port   int    `json:"port"`
+		Weight int    `json:"weight"`
+	}
+	if err := json.Unmarshal([]byte(targetsJSON), &raw); err != nil {
 		return nil, fmt.Errorf("解析目标列表失败: %w", err)
 	}
-	
-	targets := make([]models.TargetConfig, 0, len(dbTargets))
-	for _, t := range dbTargets {
-		target := models.TargetConfig{
-			Host:           t.Host,
-			Port:           t.Port,
-			Weight:         t.Weight,
-			Protocol:       "tcp", // 默认TCP
-			HealthCheck:    false,
-			HealthCheckURL: "",
-			Timeout:        30,
-			MaxRetries:     3,
-		}
-		targets = append(targets, target)
-	}
 
+	targets := make([]models.TargetConfig, 0, len(raw))
+	for _, t := range raw {
+		targets = append(targets, models.TargetConfig{
+			Host:       t.Host,
+			Port:       t.Port,
+			Weight:     t.Weight,
+			Protocol:   "tcp",
+			Timeout:    30,
+			MaxRetries: 3,
+		})
+	}
 	return targets, nil
 }
 
 // getPeerServers 获取对端服务器列表
-func (m *Manager) getPeerServers(nodeType, groupID string) []models.PeerServer {
-	// 根据节点类型返回对端服务器
-	// 入口节点需要知道所有出口节点
-	// 出口节点需要知道所有入口节点
-
-	var targetType string
-	if nodeType == "entry" {
-		targetType = "exit"
-	} else {
-		targetType = "entry"
+func (m *Manager) getPeerServers(nodeRole, groupID string) []models.PeerServer {
+	if m.dao == nil {
+		return []models.PeerServer{}
 	}
 
-	// 获取对端类型的所有节点组
-	groups, err := m.db.DB.SQLite.ListNodeGroups("", targetType)
+	/* 根据节点角色确定对端角色 */
+	var targetRole string
+	if nodeRole == "ingress" || nodeRole == "entry" {
+		targetRole = "egress"
+	} else {
+		targetRole = "ingress"
+	}
+
+	groups, err := m.dao.ListNodeGroups(targetRole)
 	if err != nil {
 		logger.Error("获取节点组失败", zap.Error(err))
 		return []models.PeerServer{}
@@ -173,17 +194,15 @@ func (m *Manager) getPeerServers(nodeType, groupID string) []models.PeerServer {
 
 	peerServers := make([]models.PeerServer, 0)
 	for _, group := range groups {
-		// 获取该组的所有在线节点
-		nodes, _ := m.db.DB.SQLite.ListNodes(group.ID, "online", 0, 100)
-		for _, node := range nodes {
-
+		nodes, _ := m.dao.ListNodes(group.ID, "online", 100, 0)
+		for _, nd := range nodes {
 			peer := models.PeerServer{
-				ServerID:   node.ID,
-				ServerName: node.Name,
-				Host:       node.IP,
-				Port:       node.Port,
-				Type:       node.Type,
-				Region:     node.Tags,
+				ServerID:   nd.ID,
+				ServerName: nd.Name,
+				Host:       nd.PublicIP,
+				Port:       nd.Port,
+				Type:       string(nd.Role),
+				Region:     "",
 				Priority:   1,
 				Protocols:  []string{"tcp", "udp", "http", "https"},
 			}
