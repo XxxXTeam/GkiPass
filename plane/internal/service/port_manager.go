@@ -4,15 +4,16 @@ import (
 	"fmt"
 	"sync"
 
-	"gkipass/plane/db"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
 // PortManager 端口管理器（按隧道组共享端口）
 type PortManager struct {
-	db         *db.Manager
+	dao        *dao.DAO
 	groupPorts map[string]map[int]string // groupID -> (port -> tunnelID)
 	mu         sync.RWMutex
 }
@@ -23,10 +24,10 @@ var (
 )
 
 // GetPortManager 获取端口管理器单例
-func GetPortManager(dbManager *db.Manager) *PortManager {
+func GetPortManager(d *dao.DAO) *PortManager {
 	portManagerOnce.Do(func() {
 		portManagerInstance = &PortManager{
-			db:         dbManager,
+			dao:        d,
 			groupPorts: make(map[string]map[int]string),
 		}
 		// 初始化时加载已占用端口
@@ -42,23 +43,19 @@ func (pm *PortManager) loadOccupiedPorts() error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	// 查询所有启用的隧道
-	enabled := true
-	tunnels, err := pm.db.DB.SQLite.ListTunnels("", &enabled)
-	if err != nil {
-		logger.Error("加载已占用端口失败", zap.Error(err))
-		return err
+	/* 查询所有启用的隧道 */
+	var tunnels []models.Tunnel
+	if pm.dao != nil {
+		pm.dao.DB.Where("enabled = ?", true).Find(&tunnels)
 	}
 
-	// 重建端口占用映射（按组）
 	pm.groupPorts = make(map[string]map[int]string)
 	for _, tunnel := range tunnels {
-		// 使用入口组ID作为key
-		groupID := tunnel.EntryGroupID
+		groupID := tunnel.IngressGroupID
 		if pm.groupPorts[groupID] == nil {
 			pm.groupPorts[groupID] = make(map[int]string)
 		}
-		pm.groupPorts[groupID][tunnel.LocalPort] = tunnel.ID
+		pm.groupPorts[groupID][tunnel.ListenPort] = tunnel.ID
 	}
 
 	totalPorts := 0

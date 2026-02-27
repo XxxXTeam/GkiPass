@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"gkipass/plane/db"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
+	"gkipass/plane/internal/pkg/logger"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -34,13 +37,15 @@ type NodeStats struct {
 
 // StatsHandler 统计数据处理器
 type StatsHandler struct {
-	db *db.Manager
+	db  *db.Manager
+	dao *dao.DAO
 }
 
 // NewStatsHandler 创建统计处理器
-func NewStatsHandler(dbManager *db.Manager) *StatsHandler {
+func NewStatsHandler(dbManager *db.Manager, d *dao.DAO) *StatsHandler {
 	return &StatsHandler{
-		db: dbManager,
+		db:  dbManager,
+		dao: d,
 	}
 }
 
@@ -60,9 +65,9 @@ func (h *StatsHandler) HandleStatsReport(nodeConn *NodeConnection, data json.Raw
 		logger.Error("存储统计数据到Redis失败", zap.Error(err))
 	}
 
-	// 存储到 SQLite（历史数据）
-	if err := h.storeStatsToSQLite(&stats); err != nil {
-		logger.Error("存储统计数据到SQLite失败", zap.Error(err))
+	// 存储到数据库（历史数据）
+	if err := h.storeStatsToDB(&stats); err != nil {
+		logger.Error("存储统计数据到DB失败", zap.Error(err))
 	}
 
 	logger.Debug("收到节点统计数据",
@@ -91,54 +96,27 @@ func (h *StatsHandler) storeStatsToRedis(stats *NodeStats) error {
 	return h.db.Cache.Redis.Set(key, string(data), 5*time.Minute)
 }
 
-// storeStatsToSQLite 存储统计数据到 SQLite
-func (h *StatsHandler) storeStatsToSQLite(stats *NodeStats) error {
-	// 创建统计记录
-	statRecord := &struct {
-		ID             string
-		NodeID         string
-		Timestamp      time.Time
-		BytesIn        int64
-		BytesOut       int64
-		PacketsIn      int64
-		PacketsOut     int64
-		Connections    int
-		ActiveSessions int
-		ErrorCount     int
-		AvgLatency     float64
-		CPUUsage       float64
-		MemoryUsage    int64
-	}{
-		ID:             fmt.Sprintf("%s-%d", stats.NodeID, stats.Timestamp.Unix()),
-		NodeID:         stats.NodeID,
-		Timestamp:      stats.Timestamp,
-		BytesIn:        stats.TrafficIn,
-		BytesOut:       stats.TrafficOut,
-		PacketsIn:      stats.PacketsIn,
-		PacketsOut:     stats.PacketsOut,
-		Connections:    stats.Connections,
-		ActiveSessions: stats.ActiveSessions,
-		ErrorCount:     stats.ErrorCount,
-		AvgLatency:     0, // 待实现
-		CPUUsage:       stats.CPUUsage,
-		MemoryUsage:    stats.MemoryUsed,
+/* hasDAO 检查 DAO 是否可用 */
+func (h *StatsHandler) hasDAO() bool {
+	return h.dao != nil
+}
+
+// storeStatsToDB 存储统计数据到数据库（通过 GORM DAO）
+func (h *StatsHandler) storeStatsToDB(stats *NodeStats) error {
+	if !h.hasDAO() {
+		return fmt.Errorf("DAO 不可用，跳过统计存储")
 	}
 
-	// 插入数据库
-	query := `
-		INSERT OR REPLACE INTO statistics 
-		(id, node_id, timestamp, bytes_in, bytes_out, packets_in, packets_out, 
-		 connections, active_sessions, error_count, avg_latency, cpu_usage, memory_usage)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
+	metric := &models.NodeMetrics{}
+	metric.ID = uuid.New().String()
+	metric.NodeID = stats.NodeID
+	metric.CPUUsage = stats.CPUUsage
+	metric.MemoryUsage = stats.MemoryUsage
+	metric.NetworkIn = stats.TrafficIn
+	metric.NetworkOut = stats.TrafficOut
+	metric.Connections = stats.Connections
 
-	_, err := h.db.DB.SQLite.GetDB().Exec(query,
-		statRecord.ID, statRecord.NodeID, statRecord.Timestamp,
-		statRecord.BytesIn, statRecord.BytesOut, statRecord.PacketsIn, statRecord.PacketsOut,
-		statRecord.Connections, statRecord.ActiveSessions, statRecord.ErrorCount,
-		statRecord.AvgLatency, statRecord.CPUUsage, statRecord.MemoryUsage)
-
-	return err
+	return h.dao.CreateNodeMetrics(metric)
 }
 
 // GetNodeStats 从 Redis 获取节点统计数据
@@ -164,35 +142,26 @@ func (h *StatsHandler) GetNodeStats(nodeID string) (*NodeStats, error) {
 
 // GetNodeStatsHistory 获取节点历史统计数据
 func (h *StatsHandler) GetNodeStatsHistory(nodeID string, from, to time.Time, limit int) ([]NodeStats, error) {
-	query := `
-		SELECT node_id, timestamp, bytes_in, bytes_out, packets_in, packets_out,
-		       connections, active_sessions, error_count, cpu_usage, memory_usage
-		FROM statistics
-		WHERE node_id = ? AND timestamp BETWEEN ? AND ?
-		ORDER BY timestamp DESC
-		LIMIT ?
-	`
+	if !h.hasDAO() {
+		return nil, fmt.Errorf("DAO 不可用")
+	}
 
-	rows, err := h.db.DB.SQLite.GetDB().Query(query, nodeID, from, to, limit)
+	metrics, err := h.dao.ListNodeMetrics(nodeID, from, to, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var statsList []NodeStats
-	for rows.Next() {
-		var stats NodeStats
-		err := rows.Scan(
-			&stats.NodeID, &stats.Timestamp,
-			&stats.TrafficIn, &stats.TrafficOut,
-			&stats.PacketsIn, &stats.PacketsOut,
-			&stats.Connections, &stats.ActiveSessions,
-			&stats.ErrorCount, &stats.CPUUsage, &stats.MemoryUsed,
-		)
-		if err != nil {
-			continue
-		}
-		statsList = append(statsList, stats)
+	for _, m := range metrics {
+		statsList = append(statsList, NodeStats{
+			NodeID:      m.NodeID,
+			Timestamp:   m.CreatedAt,
+			CPUUsage:    m.CPUUsage,
+			MemoryUsage: m.MemoryUsage,
+			TrafficIn:   m.NetworkIn,
+			TrafficOut:  m.NetworkOut,
+			Connections: m.Connections,
+		})
 	}
 
 	return statsList, nil
@@ -200,66 +169,44 @@ func (h *StatsHandler) GetNodeStatsHistory(nodeID string, from, to time.Time, li
 
 // AggregateStats 聚合统计数据（按小时）
 func (h *StatsHandler) AggregateStats(nodeID string, hours int) error {
-	// 1. 计算时间范围
+	if !h.hasDAO() {
+		return fmt.Errorf("DAO 不可用")
+	}
+
 	now := time.Now()
 	cutoff := now.Add(-time.Duration(hours) * time.Hour)
-	
-	// 2. 查询原始数据
-	query := `
-		SELECT 
-			strftime('%Y-%m-%d %H:00:00', timestamp) as hour,
-			SUM(bytes_in) as total_in,
-			SUM(bytes_out) as total_out,
-			AVG(connections) as avg_connections,
-			AVG(cpu_usage) as avg_cpu,
-			AVG(memory_usage) as avg_memory
-		FROM statistics
-		WHERE node_id = ? AND timestamp >= ?
-		GROUP BY strftime('%Y-%m-%d %H:00:00', timestamp)
-	`
-	
-	rows, err := h.db.DB.SQLite.GetDB().Query(query, nodeID, cutoff)
+
+	metrics, err := h.dao.ListNodeMetrics(nodeID, cutoff, now, 0)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	
-	// 3. 处理聚合数据
-	for rows.Next() {
-		var hour string
-		var totalIn, totalOut int64
-		var avgConn, avgCPU, avgMem float64
-		
-		if err := rows.Scan(&hour, &totalIn, &totalOut, &avgConn, &avgCPU, &avgMem); err != nil {
-			continue
-		}
-		
-		// 保存聚合数据到单独的表或Redis
+
+	for _, m := range metrics {
 		logger.Debug("统计数据聚合",
 			zap.String("nodeID", nodeID),
-			zap.String("hour", hour),
-			zap.Int64("trafficIn", totalIn),
-			zap.Int64("trafficOut", totalOut))
+			zap.Time("time", m.CreatedAt),
+			zap.Int64("trafficIn", m.NetworkIn),
+			zap.Int64("trafficOut", m.NetworkOut))
 	}
-	
+
 	return nil
 }
 
 // CleanupOldStats 清理旧的统计数据
 func (h *StatsHandler) CleanupOldStats(days int) error {
+	if !h.hasDAO() {
+		return fmt.Errorf("DAO 不可用")
+	}
 	cutoff := time.Now().AddDate(0, 0, -days)
 
-	query := `DELETE FROM statistics WHERE timestamp < ?`
-	result, err := h.db.DB.SQLite.GetDB().Exec(query, cutoff)
+	affected, err := h.dao.DeleteOldMetrics(cutoff)
 	if err != nil {
 		return err
 	}
 
-	affected, _ := result.RowsAffected()
 	logger.Info("清理旧统计数据完成",
 		zap.Int("days", days),
 		zap.Int64("deleted", affected))
 
 	return nil
 }
-
