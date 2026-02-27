@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/pkg/logger"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -12,31 +12,58 @@ import (
 
 // NodeConnection 节点连接
 type NodeConnection struct {
-	NodeID   string
-	Conn     *websocket.Conn
-	Send     chan *Message
-	LastSeen time.Time
-	IsAlive  bool
-	mu       sync.RWMutex
+	NodeID    string
+	Conn      *websocket.Conn
+	Send      chan *Message
+	LastSeen  time.Time
+	IsAlive   bool
+	mu        sync.RWMutex
+	closeOnce sync.Once /* 保护 close(Send) 只执行一次，避免双重 close panic */
+}
+
+/* closeSend 安全关闭 Send channel，多次调用幂等 */
+func (nc *NodeConnection) closeSend() {
+	nc.closeOnce.Do(func() {
+		close(nc.Send)
+	})
 }
 
 // Manager WebSocket 连接管理器
 type Manager struct {
-	connections map[string]*NodeConnection // nodeID -> connection
-	register    chan *NodeConnection
-	unregister  chan *NodeConnection
-	broadcast   chan *Message
-	mu          sync.RWMutex
+	connections    map[string]*NodeConnection // nodeID -> connection
+	register       chan *NodeConnection
+	unregister     chan *NodeConnection
+	broadcast      chan *Message
+	maxConnections int /* 最大连接数限制，0 表示不限制 */
+	mu             sync.RWMutex
 }
 
 // NewManager 创建连接管理器
-func NewManager() *Manager {
-	return &Manager{
-		connections: make(map[string]*NodeConnection),
-		register:    make(chan *NodeConnection, 10),
-		unregister:  make(chan *NodeConnection, 10),
-		broadcast:   make(chan *Message, 100),
+func NewManager(maxConnections ...int) *Manager {
+	maxConn := 0
+	if len(maxConnections) > 0 && maxConnections[0] > 0 {
+		maxConn = maxConnections[0]
 	}
+	return &Manager{
+		connections:    make(map[string]*NodeConnection),
+		register:       make(chan *NodeConnection, 10),
+		unregister:     make(chan *NodeConnection, 10),
+		broadcast:      make(chan *Message, 100),
+		maxConnections: maxConn,
+	}
+}
+
+/*
+IsAtCapacity 检查是否已达到最大连接数
+功能：在接受新连接前调用，防止资源耗尽
+*/
+func (m *Manager) IsAtCapacity() bool {
+	if m.maxConnections <= 0 {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.connections) >= m.maxConnections
 }
 
 // Run 运行管理器
@@ -70,7 +97,7 @@ func (m *Manager) registerNode(conn *NodeConnection) {
 
 	// 如果节点已存在，先关闭旧连接
 	if oldConn, exists := m.connections[conn.NodeID]; exists {
-		close(oldConn.Send)
+		oldConn.closeSend()
 		oldConn.Conn.Close()
 	}
 
@@ -88,7 +115,7 @@ func (m *Manager) unregisterNode(conn *NodeConnection) {
 
 	if _, exists := m.connections[conn.NodeID]; exists {
 		delete(m.connections, conn.NodeID)
-		close(conn.Send)
+		conn.closeSend()
 
 		logger.Info("节点已断开",
 			zap.String("nodeID", conn.NodeID),
@@ -236,4 +263,3 @@ type WSError struct {
 func (e *WSError) Error() string {
 	return e.Message
 }
-

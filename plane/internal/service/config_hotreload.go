@@ -4,15 +4,13 @@ import (
 	"sync"
 	"time"
 
-	"gkipass/plane/db"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
 // ConfigHotReloader 配置热更新器
 type ConfigHotReloader struct {
-	db            *db.Manager
 	watchers      map[string][]ConfigWatcher
 	mu            sync.RWMutex
 	stopChan      chan struct{}
@@ -32,9 +30,8 @@ type ConfigUpdate struct {
 }
 
 // NewConfigHotReloader 创建配置热更新器
-func NewConfigHotReloader(db *db.Manager) *ConfigHotReloader {
+func NewConfigHotReloader() *ConfigHotReloader {
 	return &ConfigHotReloader{
-		db:            db,
 		watchers:      make(map[string][]ConfigWatcher),
 		stopChan:      make(chan struct{}),
 		updateChan:    make(chan ConfigUpdate, 100),
@@ -86,32 +83,23 @@ func (chr *ConfigHotReloader) processUpdates() {
 	}
 }
 
-// notifyWatchers 通知监听器
+/* notifyWatchers 通知监听器（含 panic 恢复，防止 watcher 崩溃传播） */
 func (chr *ConfigHotReloader) notifyWatchers(update ConfigUpdate) {
 	chr.mu.RLock()
 	watchers := chr.watchers[update.Type]
 	chr.mu.RUnlock()
 
-	for _, watcher := range watchers {
-		go watcher(update)
+	for _, w := range watchers {
+		watcher := w
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("配置监听器 panic",
+						zap.String("type", update.Type),
+						zap.Any("panic", r))
+				}
+			}()
+			watcher(update)
+		}()
 	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

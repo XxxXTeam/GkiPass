@@ -4,110 +4,74 @@ import (
 	"fmt"
 	"time"
 
-	"gkipass/plane/db"
-	dbinit "gkipass/plane/db/init"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
+	"gkipass/plane/internal/pkg/logger"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
-// PlanService 套餐服务
+// PlanService 套餐服务（兼容旧接口，内部使用 DAO）
 type PlanService struct {
-	db *db.Manager
+	dao *dao.DAO
 }
 
 // NewPlanService 创建套餐服务
-func NewPlanService(dbManager *db.Manager) *PlanService {
-	return &PlanService{db: dbManager}
+func NewPlanService(d *dao.DAO) *PlanService {
+	return &PlanService{dao: d}
 }
 
 // CreatePlan 创建套餐
-func (s *PlanService) CreatePlan(plan *dbinit.Plan) error {
+func (s *PlanService) CreatePlan(plan *models.Plan) error {
 	plan.ID = uuid.New().String()
-	plan.CreatedAt = time.Now()
-	plan.UpdatedAt = time.Now()
-
-	if err := s.db.DB.SQLite.CreatePlan(plan); err != nil {
-		logger.Error("创建套餐失败",
-			zap.String("name", plan.Name),
-			zap.Error(err))
+	if err := s.dao.CreatePlan(plan); err != nil {
+		logger.Error("创建套餐失败", zap.String("name", plan.Name), zap.Error(err))
 		return err
 	}
-
-	logger.Info("套餐已创建",
-		zap.String("id", plan.ID),
-		zap.String("name", plan.Name))
-
+	logger.Info("套餐已创建", zap.String("id", plan.ID), zap.String("name", plan.Name))
 	return nil
 }
 
 // GetPlan 获取套餐
-func (s *PlanService) GetPlan(id string) (*dbinit.Plan, error) {
-	plan, err := s.db.DB.SQLite.GetPlan(id)
-	if err != nil {
-		logger.Error("获取套餐失败",
-			zap.String("id", id),
-			zap.Error(err))
-		return nil, err
-	}
-	return plan, nil
+func (s *PlanService) GetPlan(id string) (*models.Plan, error) {
+	return s.dao.GetPlan(id)
 }
 
 // ListPlans 列出套餐
-func (s *PlanService) ListPlans(enabled *bool) ([]*dbinit.Plan, error) {
-	plans, err := s.db.DB.SQLite.ListPlans(enabled)
-	if err != nil {
-		logger.Error("列出套餐失败", zap.Error(err))
-		return nil, err
-	}
-	return plans, nil
+func (s *PlanService) ListPlans(enabledOnly bool) ([]models.Plan, error) {
+	return s.dao.ListPlans(enabledOnly)
 }
 
 // UpdatePlan 更新套餐
-func (s *PlanService) UpdatePlan(plan *dbinit.Plan) error {
-	plan.UpdatedAt = time.Now()
-
-	if err := s.db.DB.SQLite.UpdatePlan(plan); err != nil {
-		logger.Error("更新套餐失败",
-			zap.String("id", plan.ID),
-			zap.Error(err))
+func (s *PlanService) UpdatePlan(plan *models.Plan) error {
+	if err := s.dao.UpdatePlan(plan); err != nil {
+		logger.Error("更新套餐失败", zap.String("id", plan.ID), zap.Error(err))
 		return err
 	}
-
-	logger.Info("套餐已更新",
-		zap.String("id", plan.ID),
-		zap.String("name", plan.Name))
-
+	logger.Info("套餐已更新", zap.String("id", plan.ID), zap.String("name", plan.Name))
 	return nil
 }
 
 // DeletePlan 删除套餐
 func (s *PlanService) DeletePlan(id string) error {
-	// 检查是否有用户正在使用
-	subs, err := s.db.DB.SQLite.GetSubscriptionsByPlanID(id)
+	subs, err := s.dao.GetSubscriptionsByPlanID(id)
 	if err != nil {
 		return err
 	}
-
 	if len(subs) > 0 {
 		return fmt.Errorf("套餐正在被 %d 个用户使用，无法删除", len(subs))
 	}
-
-	if err := s.db.DB.SQLite.DeletePlan(id); err != nil {
-		logger.Error("删除套餐失败",
-			zap.String("id", id),
-			zap.Error(err))
+	if err := s.dao.DeletePlan(id); err != nil {
+		logger.Error("删除套餐失败", zap.String("id", id), zap.Error(err))
 		return err
 	}
-
 	logger.Info("套餐已删除", zap.String("id", id))
 	return nil
 }
 
 // SubscribeUserToPlan 用户订阅套餐
-func (s *PlanService) SubscribeUserToPlan(userID, planID string, months int) (*dbinit.UserSubscription, error) {
-	// 获取套餐信息
+func (s *PlanService) SubscribeUserToPlan(userID, planID string, months int) (*models.Subscription, error) {
 	plan, err := s.GetPlan(planID)
 	if err != nil {
 		return nil, err
@@ -116,44 +80,37 @@ func (s *PlanService) SubscribeUserToPlan(userID, planID string, months int) (*d
 		return nil, fmt.Errorf("套餐未启用")
 	}
 
-	// 检查用户是否已有有效订阅
-	existingSub, _ := s.db.DB.SQLite.GetActiveSubscriptionByUserID(userID)
+	existingSub, _ := s.dao.GetActiveSubscription(userID)
 	if existingSub != nil {
 		return nil, fmt.Errorf("用户已有有效订阅")
 	}
 
-	// 创建订阅
-	startDate := time.Now()
-	var endDate time.Time
-	var trafficReset time.Time
-
-	switch plan.BillingCycle {
-	case "monthly":
-		endDate = startDate.AddDate(0, months, 0)
-		trafficReset = startDate.AddDate(0, 1, 0)
-	case "yearly":
-		endDate = startDate.AddDate(months, 0, 0)
-		trafficReset = startDate.AddDate(1, 0, 0)
+	startAt := time.Now()
+	var expireAt time.Time
+	if months <= 0 {
+		months = plan.Duration
+	}
+	switch plan.DurationUnit {
+	case "month":
+		expireAt = startAt.AddDate(0, months, 0)
+	case "year":
+		expireAt = startAt.AddDate(months, 0, 0)
 	case "permanent":
-		endDate = startDate.AddDate(100, 0, 0) // 100年
-		trafficReset = startDate.AddDate(0, 1, 0)
+		expireAt = startAt.AddDate(100, 0, 0)
+	default:
+		expireAt = startAt.AddDate(0, months, 0)
 	}
 
-	sub := &dbinit.UserSubscription{
-		ID:           uuid.New().String(),
-		UserID:       userID,
-		PlanID:       planID,
-		StartDate:    startDate,
-		EndDate:      endDate,
-		Status:       "active",
-		UsedRules:    0,
-		UsedTraffic:  0,
-		TrafficReset: trafficReset,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+	sub := &models.Subscription{
+		UserID:   userID,
+		PlanID:   planID,
+		Status:   "active",
+		StartAt:  startAt,
+		ExpireAt: expireAt,
 	}
+	sub.ID = uuid.New().String()
 
-	if err := s.db.DB.SQLite.CreateSubscriptionFromUserSubscription(sub); err != nil {
+	if err := s.dao.CreateSubscription(sub); err != nil {
 		logger.Error("创建订阅失败",
 			zap.String("userID", userID),
 			zap.String("planID", planID),
@@ -169,29 +126,20 @@ func (s *PlanService) SubscribeUserToPlan(userID, planID string, months int) (*d
 	return sub, nil
 }
 
-func (s *PlanService) GetUserSubscription(userID string) (*dbinit.UserSubscription, *dbinit.Plan, error) {
-	sub, err := s.db.DB.SQLite.GetActiveSubscriptionByUserID(userID)
+// GetUserSubscription 获取用户活跃订阅及套餐
+func (s *PlanService) GetUserSubscription(userID string) (*models.Subscription, *models.Plan, error) {
+	sub, err := s.dao.GetActiveSubscription(userID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if sub == nil {
-		// 用户无订阅，返回nil而不是错误
 		return nil, nil, nil
 	}
 
-	// 检查是否过期
-	if time.Now().After(sub.EndDate) {
+	if time.Now().After(sub.ExpireAt) {
 		sub.Status = "expired"
-		_ = s.db.DB.SQLite.UpdateSubscription(sub)
-		// 订阅过期，返回nil
+		_ = s.dao.UpdateSubscription(sub)
 		return nil, nil, nil
-	}
-
-	// 检查流量是否需要重置
-	if time.Now().After(sub.TrafficReset) {
-		sub.UsedTraffic = 0
-		sub.TrafficReset = sub.TrafficReset.AddDate(0, 1, 0) // 下个月
-		_ = s.db.DB.SQLite.UpdateSubscription(sub)
 	}
 
 	plan, err := s.GetPlan(sub.PlanID)
@@ -204,63 +152,42 @@ func (s *PlanService) GetUserSubscription(userID string) (*dbinit.UserSubscripti
 
 // CheckQuota 检查配额
 func (s *PlanService) CheckQuota(userID string, checkType string) error {
-	sub, plan, err := s.GetUserSubscription(userID)
+	_, plan, err := s.GetUserSubscription(userID)
 	if err != nil {
 		return err
+	}
+	if plan == nil {
+		return fmt.Errorf("未订阅套餐")
 	}
 
 	switch checkType {
 	case "rules":
-		if plan.MaxRules > 0 && sub.UsedRules >= plan.MaxRules {
-			return fmt.Errorf("规则数已达上限 (%d/%d)", sub.UsedRules, plan.MaxRules)
+		if plan.RuleLimit > 0 {
+			/* 统计当前隧道数 */
+			var count int64
+			s.dao.DB.Model(&models.Tunnel{}).Where("created_by = ?", userID).Count(&count)
+			if int(count) >= plan.RuleLimit {
+				return fmt.Errorf("规则数已达上限 (%d/%d)", count, plan.RuleLimit)
+			}
 		}
 	case "traffic":
-		if plan.MaxTraffic > 0 && sub.UsedTraffic >= plan.MaxTraffic {
-			return fmt.Errorf("流量已用完 (%d/%d)", sub.UsedTraffic, plan.MaxTraffic)
-		}
+		/* 流量限制由 TrafficLimiter 实时检查，此处仅校验订阅有效性 */
 	}
 
 	return nil
 }
 
-// IncrementRuleCount 增加规则数
+// IncrementRuleCount 增加规则数（新模型由 CheckQuota 动态统计，此方法为兼容保留）
 func (s *PlanService) IncrementRuleCount(userID string) error {
-	sub, err := s.db.DB.SQLite.GetActiveSubscriptionByUserID(userID)
-	if err != nil || sub == nil {
-		return fmt.Errorf("未找到有效订阅")
-	}
-
-	sub.UsedRules++
-	sub.UpdatedAt = time.Now()
-
-	return s.db.DB.SQLite.UpdateSubscription(sub)
-}
-
-// DecrementRuleCount 减少规则数
-func (s *PlanService) DecrementRuleCount(userID string) error {
-	sub, err := s.db.DB.SQLite.GetActiveSubscriptionByUserID(userID)
-	if err != nil || sub == nil {
-		return nil // 忽略错误
-	}
-
-	if sub.UsedRules > 0 {
-		sub.UsedRules--
-		sub.UpdatedAt = time.Now()
-		return s.db.DB.SQLite.UpdateSubscription(sub)
-	}
-
 	return nil
 }
 
-// AddTrafficUsage 添加流量使用
+// DecrementRuleCount 减少规则数（新模型由 CheckQuota 动态统计，此方法为兼容保留）
+func (s *PlanService) DecrementRuleCount(userID string) error {
+	return nil
+}
+
+// AddTrafficUsage 添加流量使用（新模型中流量统计移至独立表，此处为兼容保留）
 func (s *PlanService) AddTrafficUsage(userID string, bytes int64) error {
-	sub, err := s.db.DB.SQLite.GetActiveSubscriptionByUserID(userID)
-	if err != nil || sub == nil {
-		return nil // 忽略错误
-	}
-
-	sub.UsedTraffic += bytes
-	sub.UpdatedAt = time.Now()
-
-	return s.db.DB.SQLite.UpdateSubscription(sub)
+	return nil
 }

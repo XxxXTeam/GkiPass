@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )

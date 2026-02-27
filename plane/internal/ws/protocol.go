@@ -25,6 +25,12 @@ const (
 	MsgTypeConfigUpdate  MessageType = "config_update"  // 配置更新
 	MsgTypeMonitorConfig MessageType = "monitor_config" // 监控配置
 
+	// 节点 -> 服务器：容灾事件
+	MsgTypeFailoverEvent MessageType = "failover_event" // 节点上报容灾切换/回切事件
+
+	// 服务器 -> 节点：容灾事件确认
+	MsgTypeFailoverEventAck MessageType = "failover_event_ack" // 确认收到容灾事件
+
 	// 双向
 	MsgTypePong  MessageType = "pong"  // Pong
 	MsgTypeError MessageType = "error" // 错误消息

@@ -1,37 +1,35 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import { Providers } from "./providers";
+import type { Metadata } from "next"
+import { Inter } from "next/font/google"
+import { ThemeProvider } from "@/components/theme-provider"
+import { Toaster } from "@/components/ui/sonner"
+import "./globals.css"
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const inter = Inter({ subsets: ["latin"], variable: "--font-geist-sans" })
 
 export const metadata: Metadata = {
-  title: "GKiPass - Bidirectional Tunnel Control Plane",
-  description: "Manage your bidirectional tunnel control plane for secure network connections",
-};
+  title: "GkiPass - 隧道管理控制面板",
+  description: "高性能双向隧道转发管理系统",
+  icons: { icon: "/favicon.svg" },
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <Providers>
+    <html lang="zh-CN" suppressHydrationWarning>
+      <body className={`${inter.variable} antialiased`}>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem
+          disableTransitionOnChange
+        >
           {children}
-        </Providers>
+          <Toaster richColors position="top-right" />
+        </ThemeProvider>
       </body>
     </html>
-  );
+  )
 }
