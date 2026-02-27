@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/pkg/logger"
 
 	"github.com/quic-go/quic-go/http3"
 	"go.uber.org/zap"
@@ -73,11 +73,14 @@ func NewHTTP2Server(addr string, handler http.Handler, tlsConfig *tls.Config, re
 	}
 
 	server := &http.Server{
-		Addr:         addr,
-		Handler:      handler,
-		TLSConfig:    tlsConfig,
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
+		Addr:              addr,
+		Handler:           handler,
+		TLSConfig:         tlsConfig,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		ReadHeaderTimeout: 10 * time.Second,  /* 防 Slowloris：读取请求头超时 */
+		IdleTimeout:       120 * time.Second, /* 空闲连接超时，释放资源 */
+		MaxHeaderBytes:    1 << 20,           /* 1MB 请求头上限 */
 	}
 
 	return &HTTP2Server{
