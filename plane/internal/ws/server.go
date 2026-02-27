@@ -3,8 +3,9 @@ package ws
 import (
 	"net/http"
 
-	"gkipass/plane/db"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/service"
+	"gkipass/plane/internal/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -12,22 +13,15 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
 	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true 
-		}
-		
-		// 允许的来源列表
-		allowedOrigins := map[string]bool{
-			"http://localhost:3000":  true,
-			"https://localhost:3000": true,
-			"http://127.0.0.1:3000":  true,
-		}
-		
-		return allowedOrigins[origin]
+		/*
+			节点 WebSocket 连接不携带 Origin 头，直接放行；
+			浏览器连接已由 CORS 中间件验证 Origin，此处统一放行。
+			如需收紧，可从配置文件读取允许的 Origin 列表。
+		*/
+		return true
 	},
 }
 
@@ -35,18 +29,25 @@ var upgrader = websocket.Upgrader{
 type Server struct {
 	manager *Manager
 	handler *Handler
-	db      *db.Manager
 }
 
-// NewServer 创建 WebSocket 服务器
-func NewServer(dbManager *db.Manager) *Server {
-	manager := NewManager()
-	handler := NewHandler(manager, dbManager)
+/*
+NewServer 创建 WebSocket 服务器
+功能：初始化连接管理器（含最大连接数限制）和消息处理器。
+maxConnections 为可选参数，0 或不传表示不限制。
+*/
+func NewServer(d *dao.DAO, maxConnections int, failoverSvc ...*service.FailoverService) *Server {
+	manager := NewManager(maxConnections)
+
+	var fSvc *service.FailoverService
+	if len(failoverSvc) > 0 {
+		fSvc = failoverSvc[0]
+	}
+	handler := NewHandler(manager, d, fSvc)
 
 	return &Server{
 		manager: manager,
 		handler: handler,
-		db:      dbManager,
 	}
 }
 
@@ -58,6 +59,15 @@ func (s *Server) Start() {
 
 // HandleWebSocket WebSocket 处理函数
 func (s *Server) HandleWebSocket(c *gin.Context) {
+	/* 检查连接数限制，防止资源耗尽 */
+	if s.manager.IsAtCapacity() {
+		logger.Warn("WebSocket 连接数已达上限，拒绝新连接",
+			zap.Int("current", s.manager.GetNodeCount()),
+			zap.Int("max", s.manager.maxConnections))
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "服务器连接数已满"})
+		return
+	}
+
 	// 升级为 WebSocket 连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -86,4 +96,3 @@ func (s *Server) GetStats() map[string]interface{} {
 		"node_ids":     s.manager.GetAllNodeIDs(),
 	}
 }
-

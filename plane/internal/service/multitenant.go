@@ -102,22 +102,3 @@ func (mtm *MultiTenantManager) UpdateQuota(tenantID string, resourceType string,
 		quota.UsedTunnels += delta
 	}
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

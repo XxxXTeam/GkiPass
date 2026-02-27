@@ -20,11 +20,21 @@ deps:
 	go mod tidy
 	@echo "✓ 依赖安装完成"
 
-# 编译控制面板
+# 构建前端静态文件
+web-build:
+	@echo "🌐 构建前端..."
+	cd web && npm run build
+	@echo "✓ 前端构建完成: web/out/"
+
+# 编译控制面板（仅后端，需先构建前端）
 plane-build:
 	@echo "🔨 编译控制面板..."
 	go build -ldflags="-s -w" -o bin/gkipass-plane ./plane/cmd
 	@echo "✓ 编译完成: bin/gkipass-plane"
+
+# 一键全量构建：前端静态导出 + 后端嵌入编译
+all-build: web-build plane-build
+	@echo "✓ 全量构建完成（前端已嵌入二进制）"
 
 # 运行控制面板
 plane-run:

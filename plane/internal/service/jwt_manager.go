@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"gkipass/plane/db"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
@@ -58,6 +58,7 @@ func (m *JWTManager) Stop() {
 func (m *JWTManager) GetSecret() string {
 	return m.currentSecret
 }
+
 // loadOrGenerateSecret 加载或生成新的 JWT 密钥
 func (m *JWTManager) loadOrGenerateSecret() (string, error) {
 	// 检查 Redis 是否可用
@@ -77,6 +78,7 @@ func (m *JWTManager) loadOrGenerateSecret() (string, error) {
 		return "", err
 	}
 	if err := m.saveSecret(secret); err != nil {
+		logger.Warn("保存 JWT 密钥到 Redis 失败（将仅使用内存密钥）", zap.Error(err))
 	}
 
 	return secret, nil
@@ -104,7 +106,7 @@ func (m *JWTManager) saveSecret(secret string) error {
 
 // refreshSecret 刷新 JWT 密钥
 func (m *JWTManager) refreshSecret() error {
-	
+
 	newSecret, err := m.generateSecret()
 	if err != nil {
 		return fmt.Errorf("生成新密钥失败: %w", err)
@@ -122,7 +124,12 @@ func (m *JWTManager) refreshSecret() error {
 	return nil
 }
 
-// refreshLoop 定期刷新 JWT 密钥
+/*
+refreshLoop 后台密钥维护循环
+功能：定期检查 Redis 中的密钥是否与内存一致（多实例同步），
+但**不自动轮换密钥**——自动轮换会导致所有已发放的 JWT 立即失效，
+用户被强制登出。密钥轮换应通过管理员手动触发。
+*/
 func (m *JWTManager) refreshLoop() {
 	ticker := time.NewTicker(JWTSecretRefreshInterval)
 	defer ticker.Stop()
@@ -130,7 +137,15 @@ func (m *JWTManager) refreshLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			if err := m.refreshSecret(); err != nil {
+			/* 仅同步 Redis 中的密钥（多实例部署场景），不自动轮换 */
+			if m.db.HasCache() {
+				var redisSecret string
+				if err := m.db.Cache.Redis.Get(JWTSecretRedisKey, &redisSecret); err == nil && redisSecret != "" {
+					if redisSecret != m.currentSecret {
+						m.currentSecret = redisSecret
+						logger.Info("JWT 密钥已从 Redis 同步（多实例一致性）")
+					}
+				}
 			}
 		case <-m.stopChan:
 			return
