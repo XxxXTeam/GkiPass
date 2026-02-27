@@ -1,7 +1,8 @@
 package middleware
 
 import (
-	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -9,112 +10,85 @@ import (
 	"go.uber.org/zap"
 )
 
-// RequestLogger 请求日志中间件
-func RequestLogger(logger *zap.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
+/* sensitiveQueryKeys 需要在日志中脱敏的 query 参数名 */
+var sensitiveQueryKeys = map[string]bool{
+	"token":    true,
+	"ck":       true,
+	"key":      true,
+	"secret":   true,
+	"password": true,
+	"code":     true,
+}
 
-			// 生成请求ID
-			requestID := r.Header.Get("X-Request-ID")
-			if requestID == "" {
-				requestID = uuid.New().String()
-			}
-
-			// 添加请求ID到响应头
-			w.Header().Set("X-Request-ID", requestID)
-
-			// 包装响应写入器以捕获状态码
-			ww := &responseWriter{w: w, status: http.StatusOK}
-
-			// 处理请求
-			next.ServeHTTP(ww, r)
-
-			// 记录请求日志
-			duration := time.Since(start)
-
-			// 根据状态码选择日志级别
-			logFunc := logger.Info
-			if ww.status >= 500 {
-				logFunc = logger.Error
-			} else if ww.status >= 400 {
-				logFunc = logger.Warn
-			}
-
-			logFunc("HTTP请求",
-				zap.String("method", r.Method),
-				zap.String("path", r.URL.Path),
-				zap.String("query", r.URL.RawQuery),
-				zap.String("remote_addr", r.RemoteAddr),
-				zap.String("user_agent", r.UserAgent()),
-				zap.Int("status", ww.status),
-				zap.Duration("duration", duration),
-				zap.String("request_id", requestID),
-			)
-		})
+/*
+sanitizeQuery 对 query string 中的敏感参数值进行脱敏
+功能：将 token/ck/key/secret/password/code 等参数值替换为 "***"，
+防止认证凭据通过日志泄漏。
+*/
+func sanitizeQuery(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
 	}
-}
-
-// responseWriter 响应写入器包装器
-type responseWriter struct {
-	w      http.ResponseWriter
-	status int
-	size   int
-}
-
-// Header 实现http.ResponseWriter接口
-func (rw *responseWriter) Header() http.Header {
-	return rw.w.Header()
-}
-
-// Write 实现http.ResponseWriter接口
-func (rw *responseWriter) Write(b []byte) (int, error) {
-	size, err := rw.w.Write(b)
-	rw.size += size
-	return size, err
-}
-
-// WriteHeader 实现http.ResponseWriter接口
-func (rw *responseWriter) WriteHeader(statusCode int) {
-	rw.status = statusCode
-	rw.w.WriteHeader(statusCode)
-}
-
-// Flush 实现http.Flusher接口（如果底层ResponseWriter支持）
-func (rw *responseWriter) Flush() {
-	if f, ok := rw.w.(http.Flusher); ok {
-		f.Flush()
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return "***parse_error***"
 	}
+	for key := range values {
+		if sensitiveQueryKeys[strings.ToLower(key)] {
+			values.Set(key, "***")
+		}
+	}
+	return values.Encode()
 }
 
-// Logger 返回Gin日志中间件
+/*
+Logger 返回 Gin 日志中间件
+功能：为每个请求生成/传播 Request-ID，记录结构化访问日志，
+跳过 _next/static 等嵌入前端静态资源的日志避免噪音，
+对 query string 中的敏感参数自动脱敏。
+*/
 func Logger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
 
-		// 处理请求
+		/* 跳过前端静态资源的日志记录（哈希文件名，无需审计） */
+		if strings.HasPrefix(path, "/_next/static/") {
+			c.Next()
+			return
+		}
+
+		query := sanitizeQuery(c.Request.URL.RawQuery)
+
+		/* 生成或复用 Request-ID */
+		requestID := c.GetHeader("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+		c.Header("X-Request-ID", requestID)
+		c.Set("request_id", requestID)
+
 		c.Next()
 
-		// 记录日志
 		duration := time.Since(start)
+		status := c.Writer.Status()
 		logger := zap.L()
 
+		/* 根据状态码选择日志级别 */
 		logFunc := logger.Info
-		if c.Writer.Status() >= 500 {
+		if status >= 500 {
 			logFunc = logger.Error
-		} else if c.Writer.Status() >= 400 {
+		} else if status >= 400 {
 			logFunc = logger.Warn
 		}
 
 		logFunc("HTTP请求",
+			zap.String("request_id", requestID),
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),
 			zap.String("query", query),
-			zap.String("remote_addr", c.ClientIP()),
-			zap.String("user_agent", c.Request.UserAgent()),
-			zap.Int("status", c.Writer.Status()),
+			zap.String("client_ip", c.ClientIP()),
+			zap.Int("status", status),
 			zap.Int("size", c.Writer.Size()),
 			zap.Duration("duration", duration),
 		)

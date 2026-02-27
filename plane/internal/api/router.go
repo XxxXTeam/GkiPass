@@ -1,8 +1,13 @@
 package api
 
 import (
-	"gkipass/plane/internal/api/handler"
+	"time"
+
+	"gkipass/plane/internal/api/handler/billing"
 	"gkipass/plane/internal/api/handler/node"
+	"gkipass/plane/internal/api/handler/security"
+	"gkipass/plane/internal/api/handler/system"
+	"gkipass/plane/internal/api/handler/tunnel"
 	"gkipass/plane/internal/api/handler/user"
 	"gkipass/plane/internal/api/middleware"
 	"gkipass/plane/internal/service"
@@ -23,8 +28,10 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 
 	// 全局中间件
 	router.Use(middleware.Recovery())
+	router.Use(middleware.SecurityHeaders())
+	router.Use(middleware.BodyLimit(2 << 20)) /* 2MB 请求体上限，防止 OOM */
 	router.Use(middleware.Logger())
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(app.Config.Server.CORSAllowedOrigins))
 
 	// 健康检查
 	router.GET("/health", func(c *gin.Context) {
@@ -34,42 +41,55 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 		})
 	})
 
-	// Prometheus 监控指标
-	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	/*
+		Prometheus /metrics 和 /ws/stats 包含敏感运行指标，
+		仅允许本地/内网访问，生产环境应通过反向代理进一步限制。
+		此处使用 localOnly 中间件限制为 127.0.0.1/::1 访问。
+	*/
+	router.GET("/metrics", localOnlyGuard(), gin.WrapH(promhttp.Handler()))
 
 	// WebSocket 端点（节点连接）
 	router.GET("/ws/node", wsServer.HandleWebSocket)
 
-	// WebSocket 状态
-	router.GET("/ws/stats", func(c *gin.Context) {
+	// WebSocket 状态（仅本地访问）
+	router.GET("/ws/stats", localOnlyGuard(), func(c *gin.Context) {
 		c.JSON(200, wsServer.GetStats())
 	})
 
 	// API v1
 	v1 := router.Group("/api/v1")
 	{
-		captchaHandler := handler.NewCaptchaHandler(app)
+		captchaHandler := security.NewCaptchaHandler(app)
 		v1.GET("/captcha/config", captchaHandler.GetCaptchaConfig)
 		v1.GET("/captcha/image", captchaHandler.GenerateImageCaptcha)
 
+		/* GoCaptcha 行为验证码路由 */
+		goCaptchaHandler := security.NewGoCaptchaHandler(app)
+		v1.GET("/captcha/gocaptcha/generate", goCaptchaHandler.Generate)
+		v1.POST("/captcha/gocaptcha/verify", goCaptchaHandler.Verify)
+
 		// 公开公告
-		announcementHandler := handler.NewAnnouncementHandler(app)
+		announcementHandler := system.NewAnnouncementHandler(app)
 		v1.GET("/announcements", announcementHandler.ListActiveAnnouncements)
 		v1.GET("/announcements/:id", announcementHandler.GetAnnouncement)
+
+		/* 登录限流器：每个 IP 每 15 分钟最多 10 次登录尝试 */
+		loginLimiter := middleware.NewLoginRateLimiter(10, 15*time.Minute)
 
 		// 认证路由（无需JWT）
 		auth := v1.Group("/auth")
 		{
-			authHandler := handler.NewAuthHandler(app)
+			authHandler := security.NewAuthHandler(app)
 			userHandler := user.NewUserHandler(app)
 
 			auth.POST("/register", userHandler.Register)
-			auth.POST("/login", authHandler.Login)
+			auth.POST("/login", loginLimiter.Middleware(), authHandler.Login)
 			auth.POST("/logout", authHandler.Logout)
+			auth.POST("/refresh", authHandler.RefreshToken)
 
 			// GitHub OAuth
 			if app.Config.Auth.GitHub.Enabled {
-				oauthHandler := handler.NewOAuthHandler(app)
+				oauthHandler := security.NewOAuthHandler(app)
 				auth.GET("/github", oauthHandler.GitHubLoginURL)
 				auth.POST("/github/callback", oauthHandler.GitHubCallback)
 			}
@@ -78,6 +98,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 		// 需要JWT认证的路由
 		authorized := v1.Group("")
 		authService := service.NewAuthService()
+		authService.SetJWTSecret(app.Config.Auth.JWTSecret)
 		authorized.Use(middleware.JWTAuth(authService))
 		{
 			// 用户管理
@@ -87,13 +108,13 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 				users.GET("/me", userHandler.GetCurrentUser)              // 获取当前用户完整信息
 				users.GET("/permissions", userHandler.GetUserPermissions) // 获取用户权限详情
 				users.GET("/profile", userHandler.GetProfile)             // 获取基本信息（保留兼容）
-				users.PUT("/password", userHandler.UpdatePassword)
+				users.POST("/password/update", userHandler.UpdatePassword)
 
 				// 管理员功能
 				users.GET("", middleware.AdminAuth(), userHandler.ListUsers)
-				users.PUT("/:id/status", middleware.AdminAuth(), userHandler.ToggleUserStatus)
-				users.PUT("/:id/role", middleware.AdminAuth(), userHandler.UpdateUserRole)
-				users.DELETE("/:id", middleware.AdminAuth(), userHandler.DeleteUser)
+				users.POST("/:id/status/update", middleware.AdminAuth(), userHandler.ToggleUserStatus)
+				users.POST("/:id/role/update", middleware.AdminAuth(), userHandler.UpdateUserRole)
+				users.POST("/:id/delete", middleware.AdminAuth(), userHandler.DeleteUser)
 			}
 
 			// 节点组管理
@@ -102,51 +123,47 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 				groupHandler := node.NewNodeGroupHandler(app)
 				configHandler := node.NewNodeGroupConfigHandler(app)
 
-				groups.POST("", groupHandler.Create)
-				groups.GET("", groupHandler.List)
+				/* 所有用户可查看节点组列表和详情 */
+				groups.GET("/list", groupHandler.List)
 				groups.GET("/:id", groupHandler.Get)
-				groups.PUT("/:id", groupHandler.Update)
-				groups.DELETE("/:id", groupHandler.Delete)
-
-				// 节点组配置
 				groups.GET("/:id/config", configHandler.GetNodeGroupConfig)
-				groups.PUT("/:id/config", configHandler.UpdateNodeGroupConfig)
-				groups.POST("/:id/config/reset", configHandler.ResetNodeGroupConfig)
+
+				/* 管理员专用：节点组增删改和配置修改 */
+				groups.POST("/create", middleware.AdminAuth(), groupHandler.Create)
+				groups.POST("/:id/update", middleware.AdminAuth(), groupHandler.Update)
+				groups.POST("/:id/delete", middleware.AdminAuth(), groupHandler.Delete)
+				groups.POST("/:id/config/update", middleware.AdminAuth(), configHandler.UpdateNodeGroupConfig)
+				groups.POST("/:id/config/reset", middleware.AdminAuth(), configHandler.ResetNodeGroupConfig)
 			}
 
 			// 节点管理
 			nodes := authorized.Group("/nodes")
 			{
 				nodeHandler := node.NewNodeHandler(app)
-				ckHandler := handler.NewCKHandler(app)
+				ckHandler := security.NewCKHandler(app)
 				statusHandler := node.NewNodeStatusHandler(app)
 				certHandler := node.NewNodeCertHandler(app)
 
-				// 用户可用节点（根据套餐过滤）
+				/* 所有用户可查看节点（可用节点根据套餐过滤） */
 				nodes.GET("/available", nodeHandler.GetAvailableNodes)
-
-				nodes.POST("", nodeHandler.Create)
-				nodes.GET("", nodeHandler.List)
+				nodes.GET("/list", nodeHandler.List)
 				nodes.GET("/:id", nodeHandler.Get)
-				nodes.PUT("/:id", nodeHandler.Update)
-				nodes.DELETE("/:id", nodeHandler.Delete)
-				nodes.POST("/:id/heartbeat", nodeHandler.Heartbeat)
-
-				// 节点状态 API
 				nodes.GET("/:id/status", statusHandler.GetNodeStatus)
 				nodes.GET("/status/list", statusHandler.ListNodesStatus)
 				nodes.GET("/group/:group_id/status", statusHandler.GetNodesByGroup)
-
-				// Connection Key 管理
-				nodes.POST("/:id/generate-ck", ckHandler.GenerateNodeCK)
-				nodes.GET("/:id/connection-keys", ckHandler.ListNodeCKs)
-				nodes.DELETE("/connection-keys/:ck_id", ckHandler.RevokeCK)
-
-				// 节点证书管理
-				nodes.POST("/:id/cert/generate", certHandler.GenerateCert)
-				nodes.GET("/:id/cert/download", certHandler.DownloadCert)
-				nodes.POST("/:id/cert/renew", certHandler.RenewCert)
 				nodes.GET("/:id/cert/info", certHandler.GetCertInfo)
+
+				/* 管理员专用：节点增删改、CK 管理、证书操作 */
+				nodes.POST("/create", middleware.AdminAuth(), nodeHandler.Create)
+				nodes.POST("/:id/update", middleware.AdminAuth(), nodeHandler.Update)
+				nodes.POST("/:id/delete", middleware.AdminAuth(), nodeHandler.Delete)
+				nodes.POST("/:id/heartbeat", nodeHandler.Heartbeat)
+				nodes.POST("/:id/generate-ck", middleware.AdminAuth(), ckHandler.GenerateNodeCK)
+				nodes.GET("/:id/connection-keys", middleware.AdminAuth(), ckHandler.ListNodeCKs)
+				nodes.POST("/connection-keys/:ck_id/revoke", middleware.AdminAuth(), ckHandler.RevokeCK)
+				nodes.POST("/:id/cert/generate", middleware.AdminAuth(), certHandler.GenerateCert)
+				nodes.GET("/:id/cert/download", middleware.AdminAuth(), certHandler.DownloadCert)
+				nodes.POST("/:id/cert/renew", middleware.AdminAuth(), certHandler.RenewCert)
 			}
 
 			// 节点部署 API
@@ -163,19 +180,23 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 			// 策略管理
 			policies := authorized.Group("/policies")
 			{
-				policyHandler := handler.NewPolicyHandler(app)
-				policies.POST("", policyHandler.Create)
-				policies.GET("", policyHandler.List)
+				policyHandler := tunnel.NewPolicyHandler(app)
+				/* 所有用户可查看策略 */
+				policies.GET("/list", policyHandler.List)
 				policies.GET("/:id", policyHandler.Get)
-				policies.PUT("/:id", policyHandler.Update)
-				policies.DELETE("/:id", policyHandler.Delete)
-				policies.POST("/:id/deploy", policyHandler.Deploy)
+				/* 管理员专用：策略增删改和部署 */
+				policies.POST("/create", middleware.AdminAuth(), policyHandler.Create)
+				policies.POST("/:id/update", middleware.AdminAuth(), policyHandler.Update)
+				policies.POST("/:id/delete", middleware.AdminAuth(), policyHandler.Delete)
+				policies.POST("/:id/deploy", middleware.AdminAuth(), policyHandler.Deploy)
 			}
 
 			// 证书管理
 			certs := authorized.Group("/certificates")
 			{
-				certHandler := handler.NewCertificateHandler(app)
+				certHandler := security.NewCertificateHandler(app)
+				/* 管理员专用：证书全部操作 */
+				certs.Use(middleware.AdminAuth())
 				certs.POST("/ca", certHandler.GenerateCA)
 				certs.POST("/leaf", certHandler.GenerateLeaf)
 				certs.GET("", certHandler.List)
@@ -187,34 +208,33 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 			// 套餐管理
 			plans := authorized.Group("/plans")
 			{
-				planHandler := handler.NewPlanHandler(app)
+				planHandler := billing.NewPlanHandler(app)
 				plans.GET("", planHandler.List)
 				plans.GET("/:id", planHandler.Get)
-				plans.GET("/:id/subscribe", middleware.QuotaCheck(app.DB), planHandler.Subscribe)
+				plans.POST("/:id/subscribe", middleware.QuotaCheck(app.DB.GormDB), planHandler.Subscribe)
 				plans.GET("/my/subscription", planHandler.MySubscription)
 
 				// 仅管理员
 				adminPlans := plans.Group("")
 				adminPlans.Use(middleware.AdminAuth())
 				{
-					adminPlans.POST("", planHandler.Create)
-					adminPlans.PUT("/:id", planHandler.Update)
-					adminPlans.DELETE("/:id", planHandler.Delete)
+					adminPlans.POST("/create", planHandler.Create)
+					adminPlans.POST("/:id/update", planHandler.Update)
+					adminPlans.POST("/:id/delete", planHandler.Delete)
 				}
 			}
 
 			// 隧道管理
 			tunnels := authorized.Group("/tunnels")
-			tunnels.Use(middleware.QuotaCheck(app.DB))
+			tunnels.Use(middleware.QuotaCheck(app.DB.GormDB))
 			{
-				// TODO: 实现TunnelHandler的Gin方法
-				// tunnelHandler := handler.NewTunnelHandler(tunnelService)
-				// tunnels.GET("", tunnelHandler.List)
-				// tunnels.GET("/:id", tunnelHandler.Get)
-				// tunnels.POST("", middleware.RuleQuotaCheck(app.DB), tunnelHandler.Create)
-				// tunnels.PUT("/:id", tunnelHandler.Update)
-				// tunnels.DELETE("/:id", tunnelHandler.Delete)
-				// tunnels.POST("/:id/toggle", tunnelHandler.Toggle)
+				tunnelHandler := tunnel.NewGinTunnelHandler(app)
+				tunnels.GET("/list", tunnelHandler.List)
+				tunnels.GET("/:id", tunnelHandler.Get)
+				tunnels.POST("/create", tunnelHandler.Create)
+				tunnels.POST("/:id/update", tunnelHandler.Update)
+				tunnels.POST("/:id/delete", tunnelHandler.Delete)
+				tunnels.POST("/:id/toggle", tunnelHandler.Toggle)
 			}
 
 			// 统计和监控
@@ -229,7 +249,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 			// 流量统计
 			traffic := authorized.Group("/traffic")
 			{
-				trafficHandler := handler.NewTrafficStatsHandler(app)
+				trafficHandler := tunnel.NewTrafficStatsHandler(app)
 				traffic.GET("/stats", trafficHandler.ListTrafficStats)
 				traffic.GET("/summary", trafficHandler.GetTrafficSummary)
 				traffic.POST("/report", trafficHandler.ReportTraffic) // 节点上报流量
@@ -238,22 +258,37 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 			// 节点监控
 			monitoring := authorized.Group("/monitoring")
 			{
-				monitoringHandler := handler.NewMonitoringHandler(app)
+				monitoringHandler := system.NewMonitoringHandler(app)
 				monitoring.GET("/overview", monitoringHandler.ListNodeMonitoringOverview)
 				monitoring.GET("/summary", monitoringHandler.NodeMonitoringSummary)
 				monitoring.GET("/nodes/:id/status", monitoringHandler.GetNodeMonitoringStatus)
 				monitoring.GET("/nodes/:id/data", monitoringHandler.GetNodeMonitoringData)
 				monitoring.GET("/nodes/:id/history", monitoringHandler.GetNodePerformanceHistory)
 				monitoring.GET("/nodes/:id/config", monitoringHandler.GetNodeMonitoringConfig)
-				monitoring.PUT("/nodes/:id/config", middleware.AdminAuth(), monitoringHandler.UpdateNodeMonitoringConfig)
+				monitoring.POST("/nodes/:id/config/update", middleware.AdminAuth(), monitoringHandler.UpdateNodeMonitoringConfig)
 				monitoring.GET("/nodes/:id/alerts", monitoringHandler.GetNodeAlerts)
+				monitoring.GET("/nodes/:id/alert-rules", monitoringHandler.ListAlertRules)
+				monitoring.POST("/nodes/:id/alert-rules", middleware.AdminAuth(), monitoringHandler.CreateAlertRule)
+				monitoring.PUT("/alert-rules/:rule_id", middleware.AdminAuth(), monitoringHandler.UpdateAlertRule)
+				monitoring.DELETE("/alert-rules/:rule_id", middleware.AdminAuth(), monitoringHandler.DeleteAlertRule)
+				monitoring.POST("/alerts/:alert_id/acknowledge", middleware.AdminAuth(), monitoringHandler.AcknowledgeAlert)
+				monitoring.POST("/alerts/:alert_id/resolve", middleware.AdminAuth(), monitoringHandler.ResolveAlert)
 				monitoring.GET("/permissions", middleware.AdminAuth(), monitoringHandler.ListMonitoringPermissions)
 				monitoring.POST("/permissions", middleware.AdminAuth(), monitoringHandler.CreateMonitoringPermission)
 				monitoring.GET("/my-permissions", monitoringHandler.GetMyMonitoringPermissions)
 			}
 
+			// 容灾事件
+			failover := authorized.Group("/failover")
+			{
+				failoverHandler := system.NewFailoverHandler(app)
+				failover.GET("/active", failoverHandler.GetActiveFailovers)
+				failover.GET("/tunnels/:tunnel_id/history", failoverHandler.GetTunnelFailoverHistory)
+				failover.GET("/groups/:group_id/summary", failoverHandler.GetGroupFailoverSummary)
+			}
+
 			// 节点数据上报API（公开API，供节点调用）
-			v1.POST("/monitoring/report/:node_id", handler.NewMonitoringHandler(app).ReportNodeMonitoringData)
+			v1.POST("/monitoring/report/:node_id", system.NewMonitoringHandler(app).ReportNodeMonitoringData)
 
 			// 管理员专用统计
 			adminStats := authorized.Group("/admin/statistics")
@@ -289,13 +324,13 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 			}
 
 			// 通知管理
-			notificationHandler := handler.NewNotificationHandler(app)
+			notificationHandler := system.NewNotificationHandler(app)
 			notifications := authorized.Group("/notifications")
 			{
 				notifications.GET("", notificationHandler.List)
 				notifications.POST("/:id/read", notificationHandler.MarkAsRead)
 				notifications.POST("/read-all", notificationHandler.MarkAllAsRead)
-				notifications.DELETE("/:id", notificationHandler.Delete)
+				notifications.POST("/:id/delete", notificationHandler.Delete)
 			}
 
 			// 管理员专用路由
@@ -303,30 +338,30 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 			admin.Use(middleware.AdminAuth())
 			{
 				// 支付配置管理
-				paymentConfigHandler := handler.NewPaymentConfigHandler(app)
+				paymentConfigHandler := billing.NewPaymentConfigHandler(app)
 				paymentHandler := user.NewPaymentHandler(app)
 				admin.GET("/payment/configs", paymentConfigHandler.ListConfigs)
 				admin.GET("/payment/config/:id", paymentConfigHandler.GetConfig)
-				admin.PUT("/payment/config/:id", paymentConfigHandler.UpdateConfig)
+				admin.POST("/payment/config/:id/update", paymentConfigHandler.UpdateConfig)
 				admin.POST("/payment/config/:id/toggle", paymentConfigHandler.ToggleConfig)
 				admin.POST("/payment/manual-recharge", paymentHandler.ManualRecharge)
 
 				// 系统设置
-				settingsHandler := handler.NewSettingsHandler(app)
+				settingsHandler := system.NewSettingsHandler(app)
 				admin.GET("/settings/captcha", settingsHandler.GetCaptchaSettings)
-				admin.PUT("/settings/captcha", settingsHandler.UpdateCaptchaSettings)
+				admin.POST("/settings/captcha/update", settingsHandler.UpdateCaptchaSettings)
 				admin.GET("/settings/general", settingsHandler.GetGeneralSettings)
-				admin.PUT("/settings/general", settingsHandler.UpdateGeneralSettings)
+				admin.POST("/settings/general/update", settingsHandler.UpdateGeneralSettings)
 				admin.GET("/settings/security", settingsHandler.GetSecuritySettings)
-				admin.PUT("/settings/security", settingsHandler.UpdateSecuritySettings)
+				admin.POST("/settings/security/update", settingsHandler.UpdateSecuritySettings)
 				admin.GET("/settings/notification", settingsHandler.GetNotificationSettings)
-				admin.PUT("/settings/notification", settingsHandler.UpdateNotificationSettings)
+				admin.POST("/settings/notification/update", settingsHandler.UpdateNotificationSettings)
 
 				// 公告管理
 				admin.GET("/announcements", announcementHandler.ListAll)
-				admin.POST("/announcements", announcementHandler.Create)
-				admin.PUT("/announcements/:id", announcementHandler.Update)
-				admin.DELETE("/announcements/:id", announcementHandler.Delete)
+				admin.POST("/announcements/create", announcementHandler.Create)
+				admin.POST("/announcements/:id/update", announcementHandler.Update)
+				admin.POST("/announcements/:id/delete", announcementHandler.Delete)
 
 				// 通知管理（创建全局通知）
 				admin.POST("/notifications", notificationHandler.Create)
@@ -334,5 +369,29 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 		}
 	}
 
+	/* 前端静态文件服务 + SPA fallback（仅在 out/ 含构建产物时启用） */
+	SetupFrontend(router)
+
 	return router
+}
+
+/*
+localOnlyGuard 本地访问限制中间件
+功能：仅允许 127.0.0.1 / ::1 / localhost 访问，
+用于保护 /metrics 和 /ws/stats 等敏感运维端点。
+生产环境应额外通过反向代理限制访问。
+*/
+func localOnlyGuard() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ip := c.ClientIP()
+		if ip != "127.0.0.1" && ip != "::1" && ip != "localhost" {
+			c.JSON(403, gin.H{
+				"success": false,
+				"message": "此端点仅允许本地访问",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
