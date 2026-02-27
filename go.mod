@@ -11,11 +11,11 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/mattn/go-sqlite3 v1.14.32
+	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/mojocn/base64Captcha v1.3.8
 	github.com/prometheus/client_golang v1.23.2
-	github.com/quic-go/quic-go v0.55.0
-	github.com/redis/go-redis/v9 v9.17.3
+	github.com/quic-go/quic-go v0.59.0
+	github.com/redis/go-redis/v9 v9.14.0
 	github.com/rs/cors v1.11.1
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.47.0
@@ -61,7 +61,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
-	github.com/quic-go/qpack v0.5.1 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
