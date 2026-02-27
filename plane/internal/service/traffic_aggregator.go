@@ -104,22 +104,3 @@ func (ta *TrafficAggregator) GetDailyStats(tunnelID string, day time.Time) *Traf
 	key := tunnelID + ":" + day.Format("20060102")
 	return ta.dailyStats[key]
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -5,15 +5,14 @@ import (
 	"sync"
 	"time"
 
-	"gkipass/plane/db"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
 // TrafficLimiter 流量和带宽限制器
 type TrafficLimiter struct {
-	db          *db.Manager
 	userQuotas  map[string]*UserQuota
 	mu          sync.RWMutex
 	planService *PlanService
@@ -29,11 +28,10 @@ type UserQuota struct {
 }
 
 // NewTrafficLimiter 创建流量限制器
-func NewTrafficLimiter(dbManager *db.Manager) *TrafficLimiter {
+func NewTrafficLimiter(d *dao.DAO) *TrafficLimiter {
 	return &TrafficLimiter{
-		db:          dbManager,
 		userQuotas:  make(map[string]*UserQuota),
-		planService: NewPlanService(dbManager),
+		planService: NewPlanService(d),
 	}
 }
 
@@ -76,8 +74,15 @@ func (tl *TrafficLimiter) AddTraffic(userID string, bytes int64) error {
 	quota.TrafficUsed += bytes
 	quota.LastUpdate = time.Now()
 
-	// 异步更新数据库
+	/* 异步更新数据库（含 panic 恢复，防止崩溃传播到主进程） */
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("异步更新流量 panic",
+					zap.String("userID", userID),
+					zap.Any("panic", r))
+			}
+		}()
 		if err := tl.planService.AddTrafficUsage(userID, bytes); err != nil {
 			logger.Error("更新流量使用失败",
 				zap.String("userID", userID),
@@ -95,16 +100,16 @@ func (tl *TrafficLimiter) AddTraffic(userID string, bytes int64) error {
 
 // loadUserQuota 加载用户配额
 func (tl *TrafficLimiter) loadUserQuota(userID string) *UserQuota {
-	sub, plan, err := tl.planService.GetUserSubscription(userID)
-	if err != nil {
+	_, plan, err := tl.planService.GetUserSubscription(userID)
+	if err != nil || plan == nil {
 		return nil
 	}
 
 	return &UserQuota{
 		UserID:         userID,
-		TrafficUsed:    sub.UsedTraffic,
-		TrafficLimit:   plan.MaxTraffic,
-		BandwidthLimit: plan.MaxBandwidth,
+		TrafficUsed:    0, /* 流量统计由独立表管理 */
+		TrafficLimit:   plan.TrafficLimit,
+		BandwidthLimit: plan.SpeedLimit,
 		LastUpdate:     time.Now(),
 	}
 }

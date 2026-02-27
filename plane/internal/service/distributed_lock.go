@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"time"
 
+	"gkipass/plane/internal/pkg/logger"
+
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 type DistributedLock struct {
@@ -71,8 +74,7 @@ func (lm *LockManager) WithLock(ctx context.Context, key string, expiration time
 	}
 	defer func() {
 		if err := lock.Unlock(); err != nil {
-			// 记录解锁错误，但不影响主流程
-			fmt.Printf("failed to unlock: %v\n", err)
+			logger.Error("分布式锁释放失败", zap.String("key", key), zap.Error(err))
 		}
 	}()
 	return fn()
