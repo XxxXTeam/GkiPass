@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"gkipass/plane/db"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
@@ -49,7 +49,8 @@ func (s *AuditService) Log(log *AuditLog) {
 	// 存储到Redis（可选）
 	if s.db.HasCache() {
 		key := fmt.Sprintf("audit:%s", log.ID)
-		data, _ := json.Marshal(log)
-		_ = s.db.Cache.Redis.Set(key, string(data), 7*24*time.Hour)
+		if data, err := json.Marshal(log); err == nil {
+			_ = s.db.Cache.Redis.Set(key, string(data), 7*24*time.Hour)
+		}
 	}
 }

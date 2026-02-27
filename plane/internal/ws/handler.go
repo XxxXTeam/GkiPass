@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"time"
 
-	"gkipass/plane/db"
-	dbinit "gkipass/plane/db/init"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/modules/node"
 	"gkipass/plane/internal/service"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -17,20 +17,23 @@ import (
 
 // Handler WebSocket 消息处理器
 type Handler struct {
-	manager       *Manager
-	db            *db.Manager
-	tunnelService *service.TunnelService
-	nodeManager   *node.Manager
+	manager           *Manager
+	dao               *dao.DAO
+	gormTunnelSvc     *service.GormTunnelService
+	nodeManager       *node.Manager
+	failoverService   *service.FailoverService
+	monitoringService *service.NodeMonitoringService
 }
 
 // NewHandler 创建处理器
-func NewHandler(manager *Manager, dbManager *db.Manager) *Handler {
-	// TODO: Pass correct services when available
+func NewHandler(manager *Manager, d *dao.DAO, failoverSvc *service.FailoverService) *Handler {
 	return &Handler{
-		manager:       manager,
-		db:            dbManager,
-		tunnelService: service.NewTunnelService(nil, nil, nil, nil),
-		nodeManager:   node.NewManager(dbManager),
+		manager:           manager,
+		dao:               d,
+		gormTunnelSvc:     service.NewGormTunnelService(d.DB),
+		nodeManager:       node.NewManager(d),
+		failoverService:   failoverSvc,
+		monitoringService: service.NewNodeMonitoringService(d),
 	}
 }
 
@@ -87,6 +90,9 @@ func (h *Handler) readPump(conn *NodeConnection) {
 		h.manager.unregister <- conn
 		conn.Close()
 	}()
+
+	/* 限制单条消息最大 512KB，防止超大消息导致 OOM */
+	conn.Conn.SetReadLimit(512 << 10)
 
 	if err := conn.Conn.SetReadDeadline(time.Now().Add(90 * time.Second)); err != nil {
 		logger.Error("设置读取超时失败", zap.Error(err))
@@ -176,6 +182,9 @@ func (h *Handler) handleMessage(conn *NodeConnection, msg *Message) {
 	case MsgTypeMonitoringReport:
 		h.handleMonitoringReport(conn, msg)
 
+	case MsgTypeFailoverEvent:
+		h.handleFailoverEvent(conn, msg)
+
 	case MsgTypePong:
 		// Pong 消息已在 readPump 中处理
 
@@ -194,15 +203,18 @@ func (h *Handler) handleHeartbeat(conn *NodeConnection, msg *Message) {
 		return
 	}
 
-	// 更新节点状态到数据库
-	node, err := h.db.DB.SQLite.GetNode(req.NodeID)
-	if err != nil || node == nil {
-		return
+	/* 强制使用已认证的 conn.NodeID，防止客户端伪造 */
+	nodeID := conn.NodeID
+	if h.dao != nil {
+		ndNode, err := h.dao.GetNode(nodeID)
+		if err != nil || ndNode == nil {
+			logger.Debug("心跳对应节点不存在", zap.String("nodeID", nodeID))
+		} else {
+			ndNode.Status = models.NodeStatus(req.Status)
+			ndNode.LastOnline = time.Now()
+			h.dao.UpdateNode(ndNode)
+		}
 	}
-
-	node.Status = req.Status
-	node.LastSeen = time.Now()
-	h.db.DB.SQLite.UpdateNode(node)
 
 	// 发送心跳响应
 	resp := &HeartbeatResponse{
@@ -210,7 +222,11 @@ func (h *Handler) handleHeartbeat(conn *NodeConnection, msg *Message) {
 		Timestamp: time.Now(),
 	}
 
-	respMsg, _ := NewMessage(MsgTypeHeartbeat, resp)
+	respMsg, err := NewMessage(MsgTypeHeartbeat, resp)
+	if err != nil {
+		logger.Error("创建心跳响应消息失败", zap.Error(err))
+		return
+	}
 	conn.Send <- respMsg
 }
 
@@ -223,7 +239,7 @@ func (h *Handler) handleTrafficReport(conn *NodeConnection, msg *Message) {
 	}
 
 	// 更新隧道流量统计
-	if err := h.tunnelService.UpdateTraffic(req.TunnelID, req.TrafficIn, req.TrafficOut); err != nil {
+	if err := h.gormTunnelSvc.UpdateTraffic(req.TunnelID, req.TrafficIn, req.TrafficOut); err != nil {
 		logger.Error("更新流量统计失败",
 			zap.String("tunnelID", req.TunnelID),
 			zap.Error(err))
@@ -234,12 +250,51 @@ func (h *Handler) handleTrafficReport(conn *NodeConnection, msg *Message) {
 		Success: true,
 	}
 
-	respMsg, _ := NewMessage(MsgTypeTrafficReport, resp)
+	respMsg, err := NewMessage(MsgTypeTrafficReport, resp)
+	if err != nil {
+		logger.Error("创建流量响应消息失败", zap.Error(err))
+		return
+	}
 	conn.Send <- respMsg
 }
 
 // handleNodeStatus 处理节点状态
 func (h *Handler) handleNodeStatus(conn *NodeConnection, msg *Message) {
+	logger.Debug("收到节点状态报告", zap.String("nodeID", conn.NodeID))
+}
+
+/*
+handleFailoverEvent 处理节点上报的容灾切换/回切事件
+功能：解析节点上报的容灾事件，调用 FailoverService 持久化，发送确认响应
+*/
+func (h *Handler) handleFailoverEvent(conn *NodeConnection, msg *Message) {
+	var report service.FailoverEventReport
+	if err := msg.ParseData(&report); err != nil {
+		logger.Error("解析容灾事件失败",
+			zap.String("nodeID", conn.NodeID),
+			zap.Error(err))
+		return
+	}
+
+	/* 确保 NodeID 与连接匹配，防止伪造 */
+	report.NodeID = conn.NodeID
+
+	if h.failoverService != nil {
+		if err := h.failoverService.HandleEvent(&report); err != nil {
+			logger.Error("处理容灾事件失败",
+				zap.String("nodeID", conn.NodeID),
+				zap.Error(err))
+		}
+	}
+
+	/* 发送确认响应 */
+	ackMsg, err := NewMessage(MsgTypeFailoverEventAck, map[string]interface{}{
+		"success":   true,
+		"tunnel_id": report.TunnelID,
+	})
+	if err == nil {
+		conn.Send <- ackMsg
+	}
 }
 
 // handleMonitoringReport 处理监控数据上报
@@ -250,14 +305,14 @@ func (h *Handler) handleMonitoringReport(conn *NodeConnection, msg *Message) {
 		return
 	}
 
+	/* 强制使用已认证的 conn.NodeID，防止客户端伪造 */
+	nodeID := conn.NodeID
+
 	logger.Debug("收到监控数据",
-		zap.String("nodeID", req.NodeID),
+		zap.String("nodeID", nodeID),
 		zap.Float64("cpuUsage", req.SystemInfo.CPUUsage),
 		zap.Float64("memUsage", req.SystemInfo.MemoryUsagePercent),
 		zap.Int("tunnels", req.TunnelStats.ActiveTunnels))
-
-	// 创建监控服务实例（如果不存在）
-	monitoringService := service.NewNodeMonitoringService(h.db)
 
 	// 转换数据结构
 	reportData := &service.NodeMonitoringReportData{
@@ -314,9 +369,9 @@ func (h *Handler) handleMonitoringReport(conn *NodeConnection, msg *Message) {
 	}
 
 	// 处理监控数据
-	if err := monitoringService.ReportMonitoringData(req.NodeID, reportData); err != nil {
+	if err := h.monitoringService.ReportMonitoringData(nodeID, reportData); err != nil {
 		logger.Error("处理监控数据失败",
-			zap.String("nodeID", req.NodeID),
+			zap.String("nodeID", nodeID),
 			zap.Error(err))
 		return
 	}
@@ -328,7 +383,11 @@ func (h *Handler) handleMonitoringReport(conn *NodeConnection, msg *Message) {
 		"message":   "监控数据已接收",
 	}
 
-	respMsg, _ := NewMessage("monitoring_ack", resp)
+	respMsg, err := NewMessage("monitoring_ack", resp)
+	if err != nil {
+		logger.Error("创建监控确认消息失败", zap.Error(err))
+		return
+	}
 	conn.Send <- respMsg
 }
 
@@ -378,7 +437,7 @@ func (h *Handler) syncRulesToNode(nodeID, groupID, nodeType string) {
 		zap.String("groupID", groupID))
 
 	// 获取该节点组的所有隧道
-	tunnels, err := h.tunnelService.GetTunnelsByGroupID(groupID)
+	tunnels, err := h.gormTunnelSvc.GetTunnelsByGroupID(groupID)
 	if err != nil {
 		logger.Error("获取隧道规则失败", zap.Error(err))
 		return
@@ -397,9 +456,9 @@ func (h *Handler) syncRulesToNode(nodeID, groupID, nodeType string) {
 		}
 
 		// 根据节点类型选择协议
-		protocol := tunnel.IngressProtocol
+		protocol := string(tunnel.IngressProtocol)
 		if nodeType == "egress" || nodeType == "exit" {
-			protocol = tunnel.EgressProtocol
+			protocol = string(tunnel.EgressProtocol)
 		}
 
 		rule := TunnelRule{
@@ -436,13 +495,16 @@ func (h *Handler) syncRulesToNode(nodeID, groupID, nodeType string) {
 
 // validateCK 验证 Connection Key
 func (h *Handler) validateCK(ck, nodeID string) bool {
-	// 1. 验证 CK 格式
 	if len(ck) < 10 {
 		return false
 	}
 
-	// 2. 从数据库查询 CK
-	ckRecord, err := h.db.DB.SQLite.GetConnectionKeyByKey(ck)
+	if h.dao == nil {
+		logger.Warn("DAO 不可用，跳过 CK 验证")
+		return false
+	}
+
+	ckRecord, err := h.dao.GetConnectionKeyByKey(ck)
 	if err != nil {
 		logger.Error("查询CK失败", zap.Error(err))
 		return false
@@ -453,13 +515,16 @@ func (h *Handler) validateCK(ck, nodeID string) bool {
 		return false
 	}
 
-	// 3. 检查是否过期
+	if ckRecord.Revoked {
+		logger.Warn("CK已吊销", zap.String("nodeID", nodeID))
+		return false
+	}
+
 	if time.Now().After(ckRecord.ExpiresAt) {
 		logger.Warn("CK已过期", zap.String("nodeID", nodeID))
 		return false
 	}
 
-	// 4. 验证节点ID是否匹配
 	if ckRecord.NodeID != nodeID {
 		logger.Warn("CK与节点ID不匹配",
 			zap.String("ckNodeID", ckRecord.NodeID),
@@ -467,7 +532,6 @@ func (h *Handler) validateCK(ck, nodeID string) bool {
 		return false
 	}
 
-	// 5. 验证类型
 	if ckRecord.Type != "node" {
 		logger.Warn("CK类型错误", zap.String("type", ckRecord.Type))
 		return false
@@ -482,25 +546,26 @@ func (h *Handler) validateCK(ck, nodeID string) bool {
 
 // updateNodeInfo 更新节点信息
 func (h *Handler) updateNodeInfo(req *NodeRegisterRequest) error {
-	node, err := h.db.DB.SQLite.GetNode(req.NodeID)
+	if h.dao == nil {
+		return &WSError{Code: "DB_UNAVAILABLE", Message: "DAO 不可用"}
+	}
+	ndNode, err := h.dao.GetNode(req.NodeID)
 	if err != nil {
 		return err
 	}
 
-	if node == nil {
-		// 节点不存在，返回错误
+	if ndNode == nil {
 		return &WSError{Code: "NODE_NOT_FOUND", Message: "节点不存在"}
 	}
 
-	// 更新节点信息
-	node.Name = req.NodeName
-	node.Status = "online"
-	node.IP = req.IP
-	node.Port = req.Port
-	node.Version = req.Version
-	node.LastSeen = time.Now()
+	ndNode.Name = req.NodeName
+	ndNode.Status = models.NodeStatusOnline
+	ndNode.PublicIP = req.IP
+	ndNode.Port = req.Port
+	ndNode.Version = req.Version
+	ndNode.LastOnline = time.Now()
 
-	return h.db.DB.SQLite.UpdateNode(node)
+	return h.dao.UpdateNode(ndNode)
 }
 
 // sendRegisterAck 发送注册确认
@@ -511,7 +576,11 @@ func (h *Handler) sendRegisterAck(conn *NodeConnection, success bool, message st
 		NodeID:  conn.NodeID,
 	}
 
-	msg, _ := NewMessage(MsgTypeRegisterAck, resp)
+	msg, err := NewMessage(MsgTypeRegisterAck, resp)
+	if err != nil {
+		logger.Error("创建注册确认消息失败", zap.Error(err))
+		return
+	}
 	conn.Send <- msg
 }
 
@@ -528,7 +597,7 @@ func (h *Handler) sendError(conn *websocket.Conn, code, message string) {
 }
 
 // NotifyRuleChange 通知规则变更（外部调用）
-func (h *Handler) NotifyRuleChange(groupID, nodeType string, tunnel *dbinit.Tunnel) {
+func (h *Handler) NotifyRuleChange(groupID, nodeType string, tunnel *models.Tunnel) {
 	logger.Info("通知规则变更",
 		zap.String("groupID", groupID),
 		zap.String("tunnelID", tunnel.ID))
@@ -548,18 +617,24 @@ func (h *Handler) NotifyRuleChange(groupID, nodeType string, tunnel *dbinit.Tunn
 
 // getOnlineNodesInGroup 获取组内所有在线节点ID
 func (h *Handler) getOnlineNodesInGroup(groupID string) []string {
-	// 从在线连接中筛选
 	allNodeIDs := h.manager.GetAllNodeIDs()
 	groupNodeIDs := make([]string, 0)
 
+	if h.dao == nil {
+		return groupNodeIDs
+	}
 	for _, nodeID := range allNodeIDs {
-		node, err := h.db.DB.SQLite.GetNode(nodeID)
-		if err != nil || node == nil {
+		ndNode, err := h.dao.GetNode(nodeID)
+		if err != nil || ndNode == nil {
 			continue
 		}
 
-		if node.GroupID == groupID {
-			groupNodeIDs = append(groupNodeIDs, nodeID)
+		/* 检查节点是否属于指定组 */
+		for _, g := range ndNode.Groups {
+			if g.ID == groupID {
+				groupNodeIDs = append(groupNodeIDs, nodeID)
+				break
+			}
 		}
 	}
 
@@ -576,6 +651,10 @@ func (h *Handler) syncRulesToAllNodes() {
 
 // sendFullNodeConfig 发送完整节点配置
 func (h *Handler) sendFullNodeConfig(nodeID string) {
+	if h.dao == nil {
+		logger.Warn("DAO 不可用，跳过节点配置下发", zap.String("nodeID", nodeID))
+		return
+	}
 	logger.Info("下发完整节点配置", zap.String("nodeID", nodeID))
 
 	// 获取完整节点配置
