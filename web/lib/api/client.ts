@@ -1,107 +1,77 @@
-"use client";
+import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios"
+import { getToken, removeToken } from "@/lib/auth"
 
-import { API_BASE_URL, DEFAULT_TIMEOUT, getDefaultHeaders } from './config';
-import { ApiResponse } from './types';
-import { getProxiedApiUrl } from './cors-proxy';
+/*
+  ApiClient API 客户端
+  功能：封装 axios 实例，统一管理请求拦截、响应处理和 JWT 认证
+*/
 
-/**
- * Base API client for making HTTP requests to the backend
- */
-export class ApiClient {
-  /**
-   * Make a GET request to the API
-   */
-  static async get<T>(endpoint: string, params?: Record<string, any>): Promise<ApiResponse<T>> {
-    const url = new URL(getProxiedApiUrl(endpoint));
-    
-    // Add query parameters if provided
-    if (params) {
-      Object.entries(params).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          url.searchParams.append(key, String(value));
-        }
-      });
-    }
-    
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: getDefaultHeaders(),
-      // 临时移除credentials模式，使用无凭证请求
-      // credentials: 'include',
-      next: { revalidate: 60 }, // Cache for 60 seconds
-    });
-    
-    return this.handleResponse<T>(response);
-  }
-  
-  /**
-   * Make a POST request to the API
-   */
-  static async post<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
-    const response = await fetch(getProxiedApiUrl(endpoint), {
-      method: 'POST',
-      headers: getDefaultHeaders(),
-      body: data ? JSON.stringify(data) : undefined,
-      // 临时移除credentials模式，使用无凭证请求
-      // credentials: 'include',
-    });
-    
-    return this.handleResponse<T>(response);
-  }
-  
-  /**
-   * Make a PUT request to the API
-   */
-  static async put<T>(endpoint: string, data?: any): Promise<ApiResponse<T>> {
-    const response = await fetch(getProxiedApiUrl(endpoint), {
-      method: 'PUT',
-      headers: getDefaultHeaders(),
-      body: data ? JSON.stringify(data) : undefined,
-      // 临时移除credentials模式，使用无凭证请求
-      // credentials: 'include',
-    });
-    
-    return this.handleResponse<T>(response);
-  }
-  
-  /**
-   * Make a DELETE request to the API
-   */
-  static async delete<T>(endpoint: string): Promise<ApiResponse<T>> {
-    const response = await fetch(getProxiedApiUrl(endpoint), {
-      method: 'DELETE',
-      headers: getDefaultHeaders(),
-      // 临时移除credentials模式，使用无凭证请求
-      // credentials: 'include',
-    });
-    
-    return this.handleResponse<T>(response);
-  }
-  
-  /**
-   * Handle API response and parse JSON data
-   */
-  private static async handleResponse<T>(response: Response): Promise<ApiResponse<T>> {
-    // For non-JSON responses
-    if (!response.headers.get('content-type')?.includes('application/json')) {
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
-      }
-      return {
-        success: true,
-        code: response.status,
-        timestamp: Date.now(),
-      };
-    }
-    
-    // For JSON responses
-    const data = await response.json();
-    
-    // Handle API error responses
-    if (!response.ok) {
-      throw new Error(data.error || data.message || `API error: ${response.status}`);
-    }
-    
-    return data as ApiResponse<T>;
-  }
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
+
+export interface ApiResponse<T = unknown> {
+  success: boolean
+  data?: T
+  message?: string
+  total?: number
 }
+
+export interface PaginationParams {
+  page?: number
+  page_size?: number
+}
+
+const client: AxiosInstance = axios.create({
+  baseURL: `${API_BASE_URL}/api/v1`,
+  timeout: 30000,
+  headers: {
+    "Content-Type": "application/json",
+  },
+})
+
+/* 请求拦截：注入 JWT Token */
+client.interceptors.request.use(
+  (config) => {
+    const token = getToken()
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error) => Promise.reject(error)
+)
+
+/* 响应拦截：统一错误处理 */
+client.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      removeToken()
+      if (typeof window !== "undefined") {
+        window.location.href = "/login"
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
+export async function apiGet<T>(url: string, config?: AxiosRequestConfig): Promise<ApiResponse<T>> {
+  const res = await client.get<ApiResponse<T>>(url, config)
+  return res.data
+}
+
+export async function apiPost<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<ApiResponse<T>> {
+  const res = await client.post<ApiResponse<T>>(url, data, config)
+  return res.data
+}
+
+export async function apiPut<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<ApiResponse<T>> {
+  const res = await client.put<ApiResponse<T>>(url, data, config)
+  return res.data
+}
+
+export async function apiDelete<T>(url: string, config?: AxiosRequestConfig): Promise<ApiResponse<T>> {
+  const res = await client.delete<ApiResponse<T>>(url, config)
+  return res.data
+}
+
+export default client

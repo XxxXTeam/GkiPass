@@ -10,25 +10,25 @@ import (
 	"net/http"
 	"time"
 
-	"gkipass/plane/db"
-	"gkipass/plane/db/sqlite"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
+	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
 )
 
 // PaymentMonitorService 支付监听服务
 type PaymentMonitorService struct {
-	db     *db.DB
+	dao    *dao.DAO
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // NewPaymentMonitorService 创建支付监听服务
-func NewPaymentMonitorService(database *db.DB) *PaymentMonitorService {
+func NewPaymentMonitorService(d *dao.DAO) *PaymentMonitorService {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PaymentMonitorService{
-		db:     database,
+		dao:    d,
 		ctx:    ctx,
 		cancel: cancel,
 	}
@@ -59,7 +59,7 @@ func (s *PaymentMonitorService) Stop() {
 
 // checkPendingPayments 检查待确认的支付
 func (s *PaymentMonitorService) checkPendingPayments() {
-	monitors, err := s.db.SQLite.ListPendingMonitors()
+	monitors, err := s.dao.ListPendingMonitors()
 	if err != nil {
 		logger.Error("查询待监听订单失败", zap.Error(err))
 		return
@@ -71,27 +71,28 @@ func (s *PaymentMonitorService) checkPendingPayments() {
 
 	logger.Debug("检查待确认支付", zap.Int("count", len(monitors)))
 
-	for _, monitor := range monitors {
+	for i := range monitors {
+		m := &monitors[i]
 		// 检查是否超时
-		if time.Now().After(monitor.ExpiresAt) {
-			s.handleTimeout(monitor)
+		if time.Now().After(m.ExpiresAt) {
+			s.handleTimeout(m)
 			continue
 		}
 
 		// 根据支付类型检查
-		switch monitor.PaymentType {
+		switch m.PaymentType {
 		case "crypto":
-			s.checkCryptoPayment(monitor)
+			s.checkCryptoPayment(m)
 		case "epay":
-			s.checkEpayPayment(monitor)
+			s.checkEpayPayment(m)
 		}
 	}
 }
 
 // checkCryptoPayment 检查加密货币支付
-func (s *PaymentMonitorService) checkCryptoPayment(monitor *sqlite.PaymentMonitor) {
+func (s *PaymentMonitorService) checkCryptoPayment(monitor *models.PaymentMonitor) {
 	// 获取加密货币配置
-	config, err := s.db.SQLite.GetPaymentConfig("crypto_usdt")
+	config, err := s.dao.GetPaymentConfig("crypto_usdt")
 	if err != nil || config == nil || !config.Enabled {
 		return
 	}
@@ -142,7 +143,8 @@ func (s *PaymentMonitorService) checkTRC20Balance(address, apiKey string) (float
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	/* 限制外部 API 响应体最大 1MB，防止恶意响应导致 OOM */
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return 0, err
 	}
@@ -166,9 +168,9 @@ func (s *PaymentMonitorService) checkTRC20Balance(address, apiKey string) (float
 }
 
 // checkEpayPayment 检查易支付订单
-func (s *PaymentMonitorService) checkEpayPayment(monitor *sqlite.PaymentMonitor) {
+func (s *PaymentMonitorService) checkEpayPayment(monitor *models.PaymentMonitor) {
 	// 获取易支付配置
-	config, err := s.db.SQLite.GetPaymentConfig("epay_default")
+	config, err := s.dao.GetPaymentConfig("epay_default")
 	if err != nil || config == nil || !config.Enabled {
 		return
 	}
@@ -224,7 +226,8 @@ func (s *PaymentMonitorService) queryEpayOrder(orderID string, config struct {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	/* 限制外部 API 响应体最大 1MB，防止恶意响应导致 OOM */
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", err
 	}
@@ -252,77 +255,72 @@ func (s *PaymentMonitorService) generateEpaySign(params map[string]string, key s
 	return hex.EncodeToString(hash[:])
 }
 
-// confirmPayment 确认支付
-func (s *PaymentMonitorService) confirmPayment(monitor *sqlite.PaymentMonitor) {
+/*
+confirmPayment 确认支付
+功能：使用事务原子化完成 监听状态更新 → 钱包余额增加 → 交易状态完成，
+防止并发竞态导致余额不一致。
+*/
+func (s *PaymentMonitorService) confirmPayment(monitor *models.PaymentMonitor) {
 	logger.Info("支付确认",
 		zap.String("transactionID", monitor.TransactionID),
 		zap.String("paymentType", monitor.PaymentType),
 		zap.Float64("amount", monitor.ExpectedAmount))
 
-	// 更新监听状态
-	if err := s.db.SQLite.UpdatePaymentMonitor(monitor.ID, "confirmed", monitor.ConfirmCount+1); err != nil {
-		logger.Error("更新监听状态失败", zap.Error(err))
-		return
-	}
+	err := s.dao.Transaction(func(txDAO *dao.DAO) error {
+		/* 1. 更新监听状态 */
+		if err := txDAO.UpdatePaymentMonitorStatus(monitor.ID, "confirmed", monitor.ConfirmCount+1); err != nil {
+			return fmt.Errorf("更新监听状态失败: %w", err)
+		}
 
-	// 获取交易记录
-	var transaction struct {
-		WalletID string
-		UserID   string
-	}
-	query := `SELECT wallet_id, user_id FROM wallet_transactions WHERE id = ?`
-	err := s.db.SQLite.Get().QueryRow(query, monitor.TransactionID).Scan(
-		&transaction.WalletID, &transaction.UserID,
-	)
+		/* 2. 获取交易记录 */
+		tx, err := txDAO.GetTransactionByID(monitor.TransactionID)
+		if err != nil || tx == nil {
+			return fmt.Errorf("查询交易记录失败: %w", err)
+		}
+
+		/* 3. 获取钱包（事务内加行锁） */
+		wallet, err := txDAO.GetWalletByID(tx.WalletID)
+		if err != nil || wallet == nil {
+			return fmt.Errorf("获取钱包失败: %w", err)
+		}
+
+		/* 4. 原子更新钱包余额 */
+		newBalance := wallet.Balance + monitor.ExpectedAmount
+		if err := txDAO.UpdateWalletBalance(wallet.ID, newBalance, wallet.FrozenAmount); err != nil {
+			return fmt.Errorf("更新钱包余额失败: %w", err)
+		}
+
+		/* 5. 更新交易状态 */
+		if err := txDAO.UpdateTransactionStatus(monitor.TransactionID, "completed", newBalance); err != nil {
+			return fmt.Errorf("更新交易状态失败: %w", err)
+		}
+
+		logger.Info("充值成功",
+			zap.String("walletUserID", wallet.UserID),
+			zap.Float64("amount", monitor.ExpectedAmount),
+			zap.Float64("newBalance", newBalance))
+		return nil
+	})
+
 	if err != nil {
-		logger.Error("查询交易记录失败", zap.Error(err))
-		return
+		logger.Error("支付确认事务失败", zap.Error(err))
 	}
-
-	// 获取钱包
-	wallet, err := s.db.SQLite.GetWalletByUserID(transaction.UserID)
-	if err != nil || wallet == nil {
-		logger.Error("获取钱包失败", zap.Error(err))
-		return
-	}
-
-	// 更新钱包余额
-	newBalance := wallet.Balance + monitor.ExpectedAmount
-	if err := s.db.SQLite.UpdateWalletBalance(wallet.ID, newBalance, wallet.Frozen); err != nil {
-		logger.Error("更新钱包余额失败", zap.Error(err))
-		return
-	}
-
-	// 更新交易状态
-	updateQuery := `UPDATE wallet_transactions 
-		SET status = 'completed', balance = ? 
-		WHERE id = ?`
-	if _, err := s.db.SQLite.Get().Exec(updateQuery, newBalance, monitor.TransactionID); err != nil {
-		logger.Error("更新交易状态失败", zap.Error(err))
-		return
-	}
-
-	logger.Info("充值成功",
-		zap.String("userID", transaction.UserID),
-		zap.Float64("amount", monitor.ExpectedAmount),
-		zap.Float64("newBalance", newBalance))
 }
 
 // handleTimeout 处理超时订单
-func (s *PaymentMonitorService) handleTimeout(monitor *sqlite.PaymentMonitor) {
+func (s *PaymentMonitorService) handleTimeout(monitor *models.PaymentMonitor) {
 	logger.Warn("支付超时",
 		zap.String("transactionID", monitor.TransactionID),
 		zap.String("paymentType", monitor.PaymentType))
 
 	// 更新状态为超时
-	if err := s.db.SQLite.UpdatePaymentMonitor(monitor.ID, "timeout", monitor.ConfirmCount); err != nil {
+	if err := s.dao.UpdatePaymentMonitorStatus(monitor.ID, "timeout", monitor.ConfirmCount); err != nil {
 		logger.Error("更新监听状态失败", zap.Error(err))
 		return
 	}
 
 	// 更新交易状态为失败
-	query := `UPDATE wallet_transactions SET status = 'failed' WHERE id = ?`
-	if _, err := s.db.SQLite.Get().Exec(query, monitor.TransactionID); err != nil {
+	if err := s.dao.UpdateTransactionStatus(monitor.TransactionID, "failed", 0); err != nil {
 		logger.Error("更新交易状态失败", zap.Error(err))
 	}
 }

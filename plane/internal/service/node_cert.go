@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"gkipass/plane/db"
-	dbinit "gkipass/plane/db/init"
-	"gkipass/plane/pkg/logger"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
+	"gkipass/plane/internal/pkg/logger"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -22,7 +22,7 @@ import (
 
 // NodeCertManager 节点证书管理器
 type NodeCertManager struct {
-	db       *db.Manager
+	dao      *dao.DAO
 	caKey    *rsa.PrivateKey
 	caCert   *x509.Certificate
 	certsDir string
@@ -30,9 +30,9 @@ type NodeCertManager struct {
 }
 
 // NewNodeCertManager 创建节点证书管理器
-func NewNodeCertManager(dbManager *db.Manager, certsDir string) (*NodeCertManager, error) {
+func NewNodeCertManager(d *dao.DAO, certsDir string) (*NodeCertManager, error) {
 	manager := &NodeCertManager{
-		db:       dbManager,
+		dao:      d,
 		certsDir: certsDir,
 		nodeDir:  filepath.Join(certsDir, "nodes"),
 	}
@@ -91,7 +91,7 @@ func (m *NodeCertManager) loadCA() error {
 }
 
 // GenerateNodeCert 为节点生成证书
-func (m *NodeCertManager) GenerateNodeCert(nodeID, nodeName string) (*dbinit.Certificate, error) {
+func (m *NodeCertManager) GenerateNodeCert(nodeID, nodeName string) (*models.NodeCertificate, error) {
 	logger.Info("生成节点证书", zap.String("nodeID", nodeID), zap.String("nodeName", nodeName))
 
 	// 生成节点私钥
@@ -162,24 +162,20 @@ func (m *NodeCertManager) GenerateNodeCert(nodeID, nodeName string) (*dbinit.Cer
 	// 计算 SPKI Pin
 	pin := fmt.Sprintf("%x", x509.MarshalPKCS1PublicKey(&nodeKey.PublicKey))
 
-	// 创建证书记录
-	cert := &dbinit.Certificate{
-		ID:          uuid.New().String(),
+	cert := &models.NodeCertificate{
+		NodeID:      nodeID,
 		Type:        "leaf",
-		Name:        fmt.Sprintf("Node Certificate - %s", nodeName),
 		CommonName:  template.Subject.CommonName,
-		PublicKey:   string(certPEM),
-		PrivateKey:  string(keyPEM),
-		Pin:         pin,
-		ParentID:    "", // 暂不关联 CA 记录
+		CertPEM:     string(certPEM),
+		KeyPEM:      string(keyPEM),
+		Fingerprint: pin,
 		NotBefore:   now,
 		NotAfter:    notAfter,
 		Revoked:     false,
-		Description: fmt.Sprintf("自动生成的节点 %s 证书", nodeName),
 	}
+	cert.ID = uuid.New().String()
 
-	// 保存到数据库
-	if err := m.db.DB.SQLite.CreateCertificate(cert); err != nil {
+	if err := m.dao.CreateCertificate(cert); err != nil {
 		return nil, fmt.Errorf("保存证书记录失败: %w", err)
 	}
 
@@ -204,8 +200,7 @@ func (m *NodeCertManager) GetNodeCertPath(nodeID string) (certPath, keyPath, caP
 func (m *NodeCertManager) RevokeNodeCert(certID string) error {
 	logger.Info("撤销节点证书", zap.String("certID", certID))
 
-	// 更新数据库状态
-	if err := m.db.DB.SQLite.RevokeCertificate(certID); err != nil {
+	if err := m.dao.RevokeCertificate(certID); err != nil {
 		return fmt.Errorf("撤销证书失败: %w", err)
 	}
 
@@ -214,7 +209,7 @@ func (m *NodeCertManager) RevokeNodeCert(certID string) error {
 }
 
 // RenewNodeCert 续期节点证书
-func (m *NodeCertManager) RenewNodeCert(nodeID, nodeName, oldCertID string) (*dbinit.Certificate, error) {
+func (m *NodeCertManager) RenewNodeCert(nodeID, nodeName, oldCertID string) (*models.NodeCertificate, error) {
 	logger.Info("续期节点证书", zap.String("nodeID", nodeID))
 
 	// 撤销旧证书
@@ -235,7 +230,7 @@ func (m *NodeCertManager) RenewNodeCert(nodeID, nodeName, oldCertID string) (*db
 }
 
 // CheckCertExpiry 检查证书是否即将过期（30天内）
-func (m *NodeCertManager) CheckCertExpiry(cert *dbinit.Certificate) bool {
+func (m *NodeCertManager) CheckCertExpiry(cert *models.NodeCertificate) bool {
 	return time.Until(cert.NotAfter) < 30*24*time.Hour
 }
 
@@ -243,9 +238,8 @@ func (m *NodeCertManager) CheckCertExpiry(cert *dbinit.Certificate) bool {
 func (m *NodeCertManager) CleanupExpiredCerts() error {
 	logger.Info("清理过期证书...")
 
-	// 获取所有已撤销或过期的证书
 	revoked := false
-	certs, err := m.db.DB.SQLite.ListCertificates("leaf", &revoked)
+	certs, err := m.dao.ListCertificates("leaf", &revoked)
 	if err != nil {
 		return fmt.Errorf("获取证书列表失败: %w", err)
 	}
