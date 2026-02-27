@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // Response API响应结构
@@ -100,8 +101,17 @@ func NotFound(w http.ResponseWriter, message string, err error) {
 }
 
 // InternalServerError 返回服务器错误响应
+// 注意：err 仅保留参数签名兼容，不会暴露给客户端
 func InternalServerError(w http.ResponseWriter, message string, err error) {
-	Error(w, http.StatusInternalServerError, message, err)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusInternalServerError)
+	resp := Response{
+		Success:   false,
+		Code:      http.StatusInternalServerError,
+		Message:   message,
+		Timestamp: time.Now().Unix(),
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // Gin兼容函数
@@ -165,9 +175,25 @@ func GinNotFound(c *gin.Context, message string, err ...error) {
 	GinError(c, http.StatusNotFound, message, e)
 }
 
-// GinInternalError 返回服务器错误响应（Gin版本）
+/*
+GinInternalError 返回服务器错误响应（Gin版本）
+功能：err 仅记录到内部日志，不会暴露给客户端。
+自动使用 zap 全局 logger 记录错误上下文（路径 + 消息 + 错误详情）。
+*/
 func GinInternalError(c *gin.Context, message string, err error) {
-	GinError(c, http.StatusInternalServerError, message, err)
+	if err != nil {
+		zap.L().Error("内部服务器错误",
+			zap.String("path", c.Request.URL.Path),
+			zap.String("message", message),
+			zap.Error(err),
+		)
+	}
+	c.JSON(http.StatusInternalServerError, Response{
+		Success:   false,
+		Code:      http.StatusInternalServerError,
+		Message:   message,
+		Timestamp: time.Now().Unix(),
+	})
 }
 
 // GinSuccessWithMessage 返回带消息的成功响应（Gin版本）
