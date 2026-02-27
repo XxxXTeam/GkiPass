@@ -3,126 +3,148 @@ package middleware
 import (
 	"strings"
 
-	"gkipass/plane/db"
+	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/api/response"
 	"gkipass/plane/internal/auth"
 
 	"github.com/gin-gonic/gin"
 )
 
-// CKAuth CK 认证中间件（用户）
-func CKAuth(dbManager *db.Manager) gin.HandlerFunc {
+/*
+extractCK 从请求中提取 Connection Key
+优先级：X-Connection-Key 头 > Authorization CK 头 > query 参数
+*/
+func extractCK(c *gin.Context) string {
+	if ck := c.GetHeader("X-Connection-Key"); ck != "" {
+		return ck
+	}
+	if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "CK ") {
+		return strings.TrimPrefix(h, "CK ")
+	}
+	return c.Query("ck")
+}
+
+/*
+CKAuth CK 认证中间件（用户）
+功能：校验 CK 格式 → 查库验证 → 检查过期/吊销 → 校验类型 → 注入用户上下文
+*/
+func CKAuth(d *dao.DAO) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 从 Header 或 Query 获取 CK
-		ck := c.GetHeader("X-Connection-Key")
+		ck := extractCK(c)
 		if ck == "" {
-			ck = c.GetHeader("Authorization")
-			if strings.HasPrefix(ck, "CK ") {
-				ck = strings.TrimPrefix(ck, "CK ")
-			}
-		}
-		if ck == "" {
-			ck = c.Query("ck")
-		}
-
-		if ck == "" {
-			c.JSON(401, gin.H{"error": "Connection Key required"})
+			response.GinUnauthorized(c, "Connection Key required")
 			c.Abort()
 			return
 		}
 
-		// 验证 CK
-		ckObj, err := dbManager.DB.SQLite.GetConnectionKeyByKey(ck)
+		/* 格式校验 */
+		if err := auth.ValidateCK(ck); err != nil {
+			response.GinUnauthorized(c, "Invalid CK format: "+err.Error())
+			c.Abort()
+			return
+		}
+
+		/* 数据库查询（仅返回未吊销且未过期的记录） */
+		ckObj, err := d.GetCKByKey(ck)
 		if err != nil || ckObj == nil {
-			c.JSON(401, gin.H{"error": "Invalid Connection Key"})
+			response.GinUnauthorized(c, "Invalid or expired Connection Key")
 			c.Abort()
 			return
 		}
 
-		if err := auth.ValidateCK(ckObj.Key); err != nil {
-			c.JSON(401, gin.H{"error": err.Error()})
+		/* 过期/吊销双重校验（防御性编程，GetCKByKey 已过滤） */
+		if ckObj.Revoked {
+			response.GinUnauthorized(c, "Connection Key has been revoked")
+			c.Abort()
+			return
+		}
+		if auth.IsExpired(ckObj) {
+			response.GinUnauthorized(c, "Connection Key has expired")
 			c.Abort()
 			return
 		}
 
-		// 仅允许用户类型的 CK
+		/* 仅允许用户类型的 CK */
 		if ckObj.Type != "user" {
-			c.JSON(403, gin.H{"error": "Invalid CK type"})
+			response.GinForbidden(c, "Invalid CK type for user access")
 			c.Abort()
 			return
 		}
 
-		// 获取用户信息
-		user, err := dbManager.DB.SQLite.GetUser(ckObj.NodeID) // NodeID 存储的是 UserID
+		/* 获取并校验用户 */
+		user, err := d.GetUser(ckObj.NodeID) /* NodeID 字段存储 UserID */
 		if err != nil || user == nil {
-			c.JSON(401, gin.H{"error": "User not found"})
+			response.GinUnauthorized(c, "User not found")
 			c.Abort()
 			return
 		}
-
 		if !user.Enabled {
-			c.JSON(403, gin.H{"error": "User disabled"})
+			response.GinForbidden(c, "User account is disabled")
 			c.Abort()
 			return
 		}
 
-		// 设置用户信息到上下文
 		c.Set("user_id", user.ID)
 		c.Set("username", user.Username)
 		c.Set("role", user.Role)
 		c.Set("ck", ck)
-
 		c.Next()
 	}
 }
 
-// NodeCKAuth 节点 CK 认证中间件
-func NodeCKAuth(dbManager *db.Manager) gin.HandlerFunc {
+/*
+NodeCKAuth 节点 CK 认证中间件
+功能：校验 CK 格式 → 查库验证 → 检查过期/吊销 → 校验类型 → 注入节点上下文
+*/
+func NodeCKAuth(d *dao.DAO) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		ck := c.Query("ck")
+		ck := extractCK(c)
 		if ck == "" {
-			ck = c.GetHeader("X-Connection-Key")
-		}
-
-		if ck == "" {
-			c.JSON(401, gin.H{"error": "Connection Key required"})
+			response.GinUnauthorized(c, "Connection Key required")
 			c.Abort()
 			return
 		}
 
-		// 验证 CK
-		ckObj, err := dbManager.DB.SQLite.GetConnectionKeyByKey(ck)
+		if err := auth.ValidateCK(ck); err != nil {
+			response.GinUnauthorized(c, "Invalid CK format: "+err.Error())
+			c.Abort()
+			return
+		}
+
+		ckObj, err := d.GetCKByKey(ck)
 		if err != nil || ckObj == nil {
-			c.JSON(401, gin.H{"error": "Invalid Connection Key"})
+			response.GinUnauthorized(c, "Invalid or expired Connection Key")
 			c.Abort()
 			return
 		}
 
-		if err := auth.ValidateCK(ckObj.Key); err != nil {
-			c.JSON(401, gin.H{"error": err.Error()})
+		if ckObj.Revoked {
+			response.GinUnauthorized(c, "Connection Key has been revoked")
+			c.Abort()
+			return
+		}
+		if auth.IsExpired(ckObj) {
+			response.GinUnauthorized(c, "Connection Key has expired")
 			c.Abort()
 			return
 		}
 
-		// 仅允许节点类型的 CK
 		if ckObj.Type != "node" {
-			c.JSON(403, gin.H{"error": "Invalid CK type"})
+			response.GinForbidden(c, "Invalid CK type for node access")
 			c.Abort()
 			return
 		}
 
-		// 获取节点信息
-		node, err := dbManager.DB.SQLite.GetNode(ckObj.NodeID)
+		node, err := d.GetNode(ckObj.NodeID)
 		if err != nil || node == nil {
-			c.JSON(401, gin.H{"error": "Node not found"})
+			response.GinUnauthorized(c, "Node not found")
 			c.Abort()
 			return
 		}
 
-		// 设置节点信息到上下文
 		c.Set("node_id", node.ID)
 		c.Set("node_name", node.Name)
-		c.Set("user_id", node.UserID)
-
+		c.Set("ck", ck)
 		c.Next()
 	}
 }

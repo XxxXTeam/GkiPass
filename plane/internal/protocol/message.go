@@ -38,6 +38,10 @@ const (
 	MessageTypeProbeRequest MessageType = "probe_request"
 	MessageTypeProbeResult  MessageType = "probe_result"
 
+	// 容灾事件消息（节点自主容灾，上报面板记录）
+	MessageTypeFailoverEvent    MessageType = "failover_event"     // 节点 → 面板：上报容灾切换/回切事件
+	MessageTypeFailoverEventAck MessageType = "failover_event_ack" // 面板 → 节点：确认收到容灾事件
+
 	// 错误和通知消息
 	MessageTypeError        MessageType = "error"
 	MessageTypeNotification MessageType = "notification"
