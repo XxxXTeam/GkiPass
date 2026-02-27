@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"gkipass/plane/db"
+	"gkipass/plane/internal/db"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,7 +40,11 @@ func (rl *RateLimiter) Limit(requests int, window time.Duration) gin.HandlerFunc
 		_ = rl.db.Cache.Redis.Get(key, &count)
 
 		if count >= requests {
-			c.JSON(429, gin.H{"error": "Too many requests"})
+			c.JSON(429, gin.H{
+				"success": false,
+				"code":    429,
+				"message": "Too many requests",
+			})
 			c.Abort()
 			return
 		}

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"gkipass/plane/db"
+	"gkipass/plane/internal/db"
 	"gkipass/plane/internal/config"
 	"gkipass/plane/internal/types"
 )
