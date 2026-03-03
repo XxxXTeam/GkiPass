@@ -7,8 +7,8 @@ import (
 	"gkipass/plane/internal/db/dao"
 	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/modules/node"
-	"gkipass/plane/internal/service"
 	"gkipass/plane/internal/pkg/logger"
+	"gkipass/plane/internal/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -163,8 +163,19 @@ func (h *Handler) writePump(conn *NodeConnection) {
 	}
 }
 
-// handleMessage 处理消息
+/*
+handleMessage 处理消息（含 panic 恢复，防止单条消息处理崩溃导致整个连接断开）
+*/
 func (h *Handler) handleMessage(conn *NodeConnection, msg *Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("WebSocket 消息处理 panic",
+				zap.String("nodeID", conn.NodeID),
+				zap.String("type", string(msg.Type)),
+				zap.Any("panic", r))
+		}
+	}()
+
 	logger.Debug("收到消息",
 		zap.String("nodeID", conn.NodeID),
 		zap.String("type", string(msg.Type)))

@@ -13,6 +13,7 @@ import (
 	"gkipass/plane/internal/api/middleware"
 	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/service"
+	"gkipass/plane/internal/version"
 	"gkipass/plane/internal/ws"
 
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 	router.GET("/health", func(c *gin.Context) {
 		health := gin.H{
 			"status":     "ok",
-			"version":    "2.0.0",
+			"version":    version.Version,
 			"go_version": runtime.Version(),
 			"started_at": startedAt.Format(time.RFC3339),
 			"uptime":     time.Since(startedAt).String(),
