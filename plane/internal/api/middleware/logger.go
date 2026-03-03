@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -60,13 +59,8 @@ func Logger() gin.HandlerFunc {
 
 		query := sanitizeQuery(c.Request.URL.RawQuery)
 
-		/* 生成或复用 Request-ID */
-		requestID := c.GetHeader("X-Request-ID")
-		if requestID == "" {
-			requestID = uuid.New().String()
-		}
-		c.Header("X-Request-ID", requestID)
-		c.Set("request_id", requestID)
+		/* 从 RequestID 中间件获取已设置的请求 ID */
+		requestID := GetRequestID(c)
 
 		c.Next()
 

@@ -114,13 +114,21 @@ func InternalServerError(w http.ResponseWriter, message string, err error) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// Gin兼容函数
+/* getRequestID 从 gin.Context 获取请求 ID */
+func getRequestID(c *gin.Context) string {
+	if id, ok := c.Get("request_id"); ok {
+		return id.(string)
+	}
+	return ""
+}
+
 // GinSuccess 返回成功响应（Gin版本）
 func GinSuccess(c *gin.Context, data interface{}) {
 	c.JSON(http.StatusOK, Response{
 		Success:   true,
 		Code:      http.StatusOK,
 		Data:      data,
+		RequestID: getRequestID(c),
 		Timestamp: time.Now().Unix(),
 	})
 }
@@ -131,6 +139,7 @@ func GinError(c *gin.Context, statusCode int, message string, err error) {
 		Success:   false,
 		Code:      statusCode,
 		Message:   message,
+		RequestID: getRequestID(c),
 		Timestamp: time.Now().Unix(),
 	}
 	if err != nil {
@@ -192,6 +201,7 @@ func GinInternalError(c *gin.Context, message string, err error) {
 		Success:   false,
 		Code:      http.StatusInternalServerError,
 		Message:   message,
+		RequestID: getRequestID(c),
 		Timestamp: time.Now().Unix(),
 	})
 }
@@ -203,6 +213,7 @@ func GinSuccessWithMessage(c *gin.Context, message string, data interface{}) {
 		Code:      http.StatusOK,
 		Message:   message,
 		Data:      data,
+		RequestID: getRequestID(c),
 		Timestamp: time.Now().Unix(),
 	})
 }
