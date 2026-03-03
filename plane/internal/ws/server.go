@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/pkg/logger"
 	"gkipass/plane/internal/service"
 
@@ -44,6 +45,19 @@ func NewServer(d *dao.DAO, maxConnections int, failoverSvc ...*service.FailoverS
 		fSvc = failoverSvc[0]
 	}
 	handler := NewHandler(manager, d, fSvc)
+
+	/* 注册节点断开回调：自动将节点状态标记为 offline */
+	if d != nil {
+		manager.SetOnDisconnect(func(nodeID string) {
+			if err := d.DB.Model(&models.Node{}).Where("id = ?", nodeID).
+				Update("status", "offline").Error; err != nil {
+				logger.Error("自动标记节点离线失败",
+					zap.String("nodeID", nodeID), zap.Error(err))
+			} else {
+				logger.Info("节点已自动标记为离线", zap.String("nodeID", nodeID))
+			}
+		})
+	}
 
 	return &Server{
 		manager: manager,

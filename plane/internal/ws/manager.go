@@ -36,7 +36,13 @@ type Manager struct {
 	broadcast      chan *Message
 	maxConnections int /* 最大连接数限制，0 表示不限制 */
 	stopChan       chan struct{}
+	onDisconnect   func(nodeID string) /* 节点断开回调（可选） */
 	mu             sync.RWMutex
+}
+
+/* SetOnDisconnect 设置节点断开回调，用于自动标记节点离线 */
+func (m *Manager) SetOnDisconnect(fn func(nodeID string)) {
+	m.onDisconnect = fn
 }
 
 // NewManager 创建连接管理器
@@ -121,12 +127,25 @@ func (m *Manager) unregisterNode(conn *NodeConnection) {
 	defer m.mu.Unlock()
 
 	if _, exists := m.connections[conn.NodeID]; exists {
-		delete(m.connections, conn.NodeID)
+		nodeID := conn.NodeID
+		delete(m.connections, nodeID)
 		conn.closeSend()
 
 		logger.Info("节点已断开",
-			zap.String("nodeID", conn.NodeID),
+			zap.String("nodeID", nodeID),
 			zap.Int("totalNodes", len(m.connections)))
+
+		/* 触发断开回调（异步，不阻塞管理器主循环） */
+		if m.onDisconnect != nil {
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("onDisconnect 回调 panic", zap.String("nodeID", nodeID), zap.Any("panic", r))
+					}
+				}()
+				m.onDisconnect(nodeID)
+			}()
+		}
 	}
 }
 
