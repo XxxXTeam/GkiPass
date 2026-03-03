@@ -241,6 +241,15 @@ func (s *GormTunnelService) UpdateTunnel(id string, req *CreateTunnelRequest) (*
 		return nil, fmt.Errorf("隧道不存在: %s", id)
 	}
 
+	/* 检查名称重复（排除自身） */
+	if req.Name != "" && req.Name != tunnel.Name {
+		var nameCount int64
+		s.db.Model(&models.Tunnel{}).Where("name = ? AND id != ?", req.Name, id).Count(&nameCount)
+		if nameCount > 0 {
+			return nil, fmt.Errorf("隧道名称 '%s' 已存在", req.Name)
+		}
+	}
+
 	/* 检查端口冲突（排除自身） */
 	groupID := req.IngressGroupID
 	if groupID == "" {
