@@ -44,7 +44,9 @@ func (h *GinTunnelHandler) List(c *gin.Context) {
 		filterUserID = middleware.GetUserID(c)
 	}
 
-	tunnels, err := h.tunnelSvc.ListTunnels(filterUserID, false)
+	/* 支持 ?enabled=true/false 筛选 */
+	enabledOnly := c.Query("enabled") == "true"
+	tunnels, err := h.tunnelSvc.ListTunnels(filterUserID, enabledOnly)
 	if err != nil {
 		h.logger.Error("列出隧道失败", zap.Error(err))
 		response.GinInternalError(c, "获取隧道列表失败", err)
