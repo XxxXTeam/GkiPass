@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 /*
@@ -15,6 +16,11 @@ maxBytes 建议值：API 请求 1-2MB，文件上传按需调整。
 func BodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Body != nil && c.Request.ContentLength > maxBytes {
+			zap.L().Warn("请求体超限被拒绝",
+				zap.String("path", c.Request.URL.Path),
+				zap.String("client_ip", c.ClientIP()),
+				zap.Int64("content_length", c.Request.ContentLength),
+				zap.Int64("max_bytes", maxBytes))
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
 				"success": false,
 				"code":    http.StatusRequestEntityTooLarge,

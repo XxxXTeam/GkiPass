@@ -194,6 +194,20 @@ func LoadConfigOrDefault(path string) *Config {
 		return DefaultConfig()
 	}
 
+	/* 关键配置防零值保护 */
+	if config.Auth.JWTExpiration <= 0 {
+		config.Auth.JWTExpiration = 24
+	}
+	if config.Server.Port <= 0 || config.Server.Port > 65535 {
+		config.Server.Port = 8080
+	}
+	if config.Server.ReadTimeout <= 0 {
+		config.Server.ReadTimeout = 30
+	}
+	if config.Server.WriteTimeout <= 0 {
+		config.Server.WriteTimeout = 30
+	}
+
 	return config
 }
 
