@@ -36,17 +36,20 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 	router.Use(middleware.Logger())
 	router.Use(middleware.CORS(app.Config.Server.CORSAllowedOrigins))
 
-	/* 健康检查：返回服务状态、版本号、启动时间、运行时长 */
+	/* 健康检查：返回服务状态、版本号、启动时间、运行时长、数据库连接池 */
 	startedAt := time.Now()
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{
+		health := gin.H{
 			"status":     "ok",
 			"version":    "2.0.0",
 			"go_version": runtime.Version(),
-			"cache":      app.DB.HasCache(),
 			"started_at": startedAt.Format(time.RFC3339),
 			"uptime":     time.Since(startedAt).String(),
-		})
+		}
+		for k, v := range app.DB.HealthCheck() {
+			health[k] = v
+		}
+		c.JSON(200, health)
 	})
 
 	/*

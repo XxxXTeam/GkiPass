@@ -163,3 +163,38 @@ GetGormDB 获取 GORM 数据库实例
 func (m *Manager) GetGormDB() *gorm.DB {
 	return m.GormDB
 }
+
+/*
+HealthCheck 数据库健康检查
+功能：检测 GORM 数据库和 Redis 的连接状态及连接池统计
+*/
+func (m *Manager) HealthCheck() map[string]interface{} {
+	result := map[string]interface{}{}
+
+	if m.GormDB != nil {
+		sqlDB, err := m.GormDB.DB()
+		if err == nil {
+			if pingErr := sqlDB.Ping(); pingErr == nil {
+				result["db_status"] = "connected"
+				stats := sqlDB.Stats()
+				result["db_pool"] = map[string]int{
+					"open":   stats.OpenConnections,
+					"in_use": stats.InUse,
+					"idle":   stats.Idle,
+				}
+			} else {
+				result["db_status"] = "error"
+			}
+		} else {
+			result["db_status"] = "error"
+		}
+	}
+
+	if m.HasCache() {
+		result["redis_status"] = "connected"
+	} else {
+		result["redis_status"] = "unavailable"
+	}
+
+	return result
+}
