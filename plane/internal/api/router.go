@@ -358,6 +358,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 				notifications.POST("/:id/read", notificationHandler.MarkAsRead)
 				notifications.POST("/read-all", notificationHandler.MarkAllAsRead)
 				notifications.POST("/:id/delete", notificationHandler.Delete)
+				notifications.POST("/clear-read", notificationHandler.ClearRead)
 			}
 
 			// 管理员专用路由

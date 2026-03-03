@@ -3,9 +3,9 @@ package system
 import (
 	"strconv"
 
-	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/api/middleware"
 	"gkipass/plane/internal/api/response"
+	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/types"
 
 	"github.com/gin-gonic/gin"
@@ -87,6 +87,19 @@ func (h *NotificationHandler) Delete(c *gin.Context) {
 	}
 
 	response.SuccessWithMessage(c, "Notification deleted", nil)
+}
+
+// ClearRead 清除所有已读通知
+func (h *NotificationHandler) ClearRead(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	result := h.app.DAO.DB.Where("user_id = ? AND read = ?", userID, true).Delete(&models.Notification{})
+	if result.Error != nil {
+		response.InternalError(c, "清除已读通知失败")
+		return
+	}
+
+	response.SuccessWithMessage(c, "已清除已读通知", gin.H{"deleted": result.RowsAffected})
 }
 
 // CreateNotificationRequest 创建通知请求

@@ -29,4 +29,7 @@ export const notificationApi = {
 
   /* 删除通知 */
   delete: (id: string) => apiPost(`/notifications/${id}/delete`),
+
+  /* 清除所有已读通知 */
+  clearRead: () => apiPost("/notifications/clear-read"),
 }
