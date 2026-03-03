@@ -156,6 +156,11 @@ function RegisterForm() {
                 </div>
               </div>
 
+              {/* 密码强度指示器 */}
+              {form.password.length > 0 && (
+                <PasswordStrength password={form.password} />
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword">确认密码</Label>
                 <div className="relative">
@@ -192,6 +197,43 @@ function RegisterForm() {
             返回登录页
           </Link>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/*
+PasswordStrength 密码强度指示器
+功能：实时评估密码强度并显示进度条和提示文字
+规则：长度≥8 +1, 大写 +1, 小写 +1, 数字 +1, 特殊字符 +1
+*/
+function PasswordStrength({ password }: { password: string }) {
+  const checks = [
+    password.length >= 8,
+    /[A-Z]/.test(password),
+    /[a-z]/.test(password),
+    /[0-9]/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ]
+  const score = checks.filter(Boolean).length
+
+  const levels = [
+    { label: "极弱", color: "bg-red-500", width: "w-1/5" },
+    { label: "弱", color: "bg-orange-500", width: "w-2/5" },
+    { label: "一般", color: "bg-yellow-500", width: "w-3/5" },
+    { label: "强", color: "bg-blue-500", width: "w-4/5" },
+    { label: "极强", color: "bg-green-500", width: "w-full" },
+  ]
+  const level = levels[Math.max(0, score - 1)] || levels[0]
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">密码强度</span>
+        <span className="text-muted-foreground">{level.label}</span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-muted">
+        <div className={`h-full rounded-full transition-all duration-300 ${level.color} ${level.width}`} />
       </div>
     </div>
   )
