@@ -1,6 +1,8 @@
 package dao
 
 import (
+	"context"
+
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -65,4 +67,16 @@ func (d *DAO) Transaction(fn func(txDAO *DAO) error) error {
 		}
 		return fn(txDAO)
 	})
+}
+
+/*
+WithContext 返回带 context 的 DAO 实例
+功能：将请求 context 传播到数据库查询，实现超时自动取消。
+用法：d.WithContext(c.Request.Context()).GetNode(id)
+*/
+func (d *DAO) WithContext(ctx context.Context) *DAO {
+	return &DAO{
+		DB:     d.DB.WithContext(ctx),
+		logger: d.logger,
+	}
 }
