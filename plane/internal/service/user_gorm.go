@@ -454,11 +454,27 @@ func (s *GormUserService) DeleteUser(targetID, operatorID string) error {
 		return err
 	}
 
-	if err := s.db.Delete(&models.User{}, "id = ?", targetID).Error; err != nil {
-		return fmt.Errorf("删除用户失败: %w", err)
+	/* 事务中删除用户及关联数据 */
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		/* 清理通知 */
+		tx.Where("user_id = ?", targetID).Delete(&models.Notification{})
+		/* 清理订阅 */
+		tx.Where("user_id = ?", targetID).Delete(&models.Subscription{})
+		/* 清理钱包交易记录 */
+		tx.Where("wallet_id IN (?)", tx.Model(&models.Wallet{}).Select("id").Where("user_id = ?", targetID)).Delete(&models.Transaction{})
+		/* 清理钱包 */
+		tx.Where("user_id = ?", targetID).Delete(&models.Wallet{})
+		/* 软删除用户 */
+		if err := tx.Delete(&models.User{}, "id = ?", targetID).Error; err != nil {
+			return fmt.Errorf("删除用户失败: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
-	s.logger.Info("用户已删除", zap.String("userID", targetID))
+	s.logger.Info("用户及关联数据已删除", zap.String("userID", targetID))
 	return nil
 }
 
