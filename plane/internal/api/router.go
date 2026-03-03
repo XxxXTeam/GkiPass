@@ -123,6 +123,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 		authService := service.NewAuthService()
 		authService.SetJWTSecret(app.Config.Auth.JWTSecret)
 		authorized.Use(middleware.JWTAuth(authService))
+		authorized.Use(middleware.AuditLog())
 		{
 			// 用户管理
 			users := authorized.Group("/users")

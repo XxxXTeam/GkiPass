@@ -12,6 +12,7 @@ import { toast } from "sonner"
 import { authApi } from "@/lib/api/auth"
 import { announcementApi, type Announcement } from "@/lib/api/announcements"
 import { setToken, setRole, isAuthenticated } from "@/lib/auth"
+import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
 
 export default function LoginPage() {
@@ -83,6 +84,11 @@ function LoginForm() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      {/* 右上角主题切换 */}
+      <div className="fixed right-4 top-4">
+        <ThemeToggle />
+      </div>
+
       <div className="w-full max-w-md space-y-6">
         {/* Logo */}
         <div className="flex flex-col items-center space-y-2 text-center">
