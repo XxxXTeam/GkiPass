@@ -44,10 +44,15 @@ client.interceptors.request.use(
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      removeToken()
-      if (typeof window !== "undefined") {
-        window.location.href = "/login"
+    if (error.response?.status === 401 && typeof window !== "undefined") {
+      /* 登录/注册接口的 401 不触发跳转，由页面自行处理 */
+      const url = error.config?.url || ""
+      const isAuthEndpoint = url.includes("/auth/login") || url.includes("/auth/register")
+      if (!isAuthEndpoint) {
+        removeToken()
+        const current = window.location.pathname
+        const redirect = current !== "/login" ? `?redirect=${encodeURIComponent(current)}` : ""
+        window.location.href = `/login${redirect}`
       }
     }
     return Promise.reject(error)

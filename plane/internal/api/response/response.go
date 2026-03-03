@@ -192,6 +192,7 @@ GinInternalError 返回服务器错误响应（Gin版本）
 func GinInternalError(c *gin.Context, message string, err error) {
 	if err != nil {
 		zap.L().Error("内部服务器错误",
+			zap.String("request_id", getRequestID(c)),
 			zap.String("path", c.Request.URL.Path),
 			zap.String("message", message),
 			zap.Error(err),

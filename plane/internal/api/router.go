@@ -1,6 +1,7 @@
 package api
 
 import (
+	"runtime"
 	"time"
 
 	"gkipass/plane/internal/api/handler/billing"
@@ -35,11 +36,16 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 	router.Use(middleware.Logger())
 	router.Use(middleware.CORS(app.Config.Server.CORSAllowedOrigins))
 
-	// 健康检查
+	/* 健康检查：返回服务状态、版本号、启动时间、运行时长 */
+	startedAt := time.Now()
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
-			"status": "ok",
-			"cache":  app.DB.HasCache(),
+			"status":     "ok",
+			"version":    "2.0.0",
+			"go_version": runtime.Version(),
+			"cache":      app.DB.HasCache(),
+			"started_at": startedAt.Format(time.RFC3339),
+			"uptime":     time.Since(startedAt).String(),
 		})
 	})
 
