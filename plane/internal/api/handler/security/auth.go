@@ -85,9 +85,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	/* 使用 GormUserService 认证 */
 	user, err := h.userSvc.Authenticate(req.Username, req.Password)
 	if err != nil {
-		h.logger.Debug("登录认证失败",
+		h.logger.Warn("登录认证失败",
 			zap.String("username", req.Username),
 			zap.String("client_ip", c.ClientIP()),
+			zap.String("user_agent", c.GetHeader("User-Agent")),
 			zap.Error(err))
 		/* 统一返回模糊错误信息，防止用户名枚举攻击 */
 		response.GinUnauthorized(c, "用户名或密码错误")
