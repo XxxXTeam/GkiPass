@@ -170,7 +170,7 @@ ListNodeGroups 列出节点组
 */
 func (d *DAO) ListNodeGroups(role string) ([]models.NodeGroup, error) {
 	var groups []models.NodeGroup
-	q := d.DB.Model(&models.NodeGroup{})
+	q := d.DB.Preload("Nodes")
 	if role != "" {
 		q = q.Where("role = ?", role)
 	}

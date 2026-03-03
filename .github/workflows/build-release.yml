@@ -48,7 +48,8 @@ jobs:
 
       - name: Get dependencies
         run: |
-          go mod download
+          mkdir -p plane/frontend/out && touch plane/frontend/out/PLACEHOLDER
+          go mod tidy
           cd client && go mod download
 
       - name: Build Plane (Server)

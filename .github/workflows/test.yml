@@ -33,7 +33,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          go mod download
+          mkdir -p plane/frontend/out && touch plane/frontend/out/PLACEHOLDER
+          go mod tidy
           cd client && go mod download
 
       - name: Run tests for plane
