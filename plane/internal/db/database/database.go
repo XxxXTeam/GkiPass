@@ -249,7 +249,8 @@ func buildMySQLDialector(cfg *Config) gorm.Dialector {
 		charset = "utf8mb4"
 	}
 
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=True&loc=Local",
+	/* timeout: 连接超时 10s, readTimeout/writeTimeout: 查询超时 30s */
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=True&loc=Local&timeout=10s&readTimeout=30s&writeTimeout=30s",
 		cfg.User, cfg.Password, cfg.Host, port, cfg.DBName, charset)
 
 	return mysql.Open(dsn)
@@ -269,7 +270,8 @@ func buildPostgresDialector(cfg *Config) gorm.Dialector {
 		sslMode = "disable"
 	}
 
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=Asia/Shanghai",
+	/* connect_timeout: 连接超时 10s, statement_timeout: 查询超时 30s */
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=Asia/Shanghai connect_timeout=10 statement_timeout=30000",
 		cfg.Host, port, cfg.User, cfg.Password, cfg.DBName, sslMode)
 
 	return postgres.Open(dsn)
