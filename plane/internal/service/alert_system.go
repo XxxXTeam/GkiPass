@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // AlertLevel 告警级别
@@ -104,7 +105,8 @@ func (as *AlertSystem) sendWebhook(alert Alert) error {
 		return err
 	}
 
-	resp, err := http.Post(as.webhookURL, "application/json", bytes.NewBuffer(data))
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(as.webhookURL, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
@@ -135,7 +137,8 @@ func (as *AlertSystem) sendTelegram(alert Alert) error {
 		"parse_mode": "Markdown",
 	})
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(data))
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return err
 	}
@@ -143,22 +146,3 @@ func (as *AlertSystem) sendTelegram(alert Alert) error {
 
 	return nil
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
