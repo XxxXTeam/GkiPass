@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { KeyRound, User } from "lucide-react"
+import { KeyRound, User, Pencil } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,7 +15,9 @@ import { userApi } from "@/lib/api/users"
 export default function ProfilePage() {
   const { user, loading } = useUser()
   const [pwForm, setPwForm] = useState({ old_password: "", new_password: "", confirm: "" })
+  const [description, setDescription] = useState(user?.avatar || "")
   const [saving, setSaving] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
 
   const handleChangePassword = async () => {
     if (!pwForm.old_password || !pwForm.new_password) {
@@ -96,6 +98,41 @@ export default function ProfilePage() {
               </p>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* 个人描述 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Pencil className="h-4 w-4" /> 个人描述
+          </CardTitle>
+          <CardDescription>设置你的个人简介</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2 max-w-md">
+            <Label>描述</Label>
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="介绍一下自己..."
+              maxLength={512}
+            />
+          </div>
+          <Button
+            disabled={savingProfile}
+            onClick={async () => {
+              setSavingProfile(true)
+              try {
+                const res = await userApi.updateProfile({ description })
+                if (res.success) toast.success("描述已更新")
+                else toast.error(res.message || "更新失败")
+              } catch { toast.error("更新失败") }
+              finally { setSavingProfile(false) }
+            }}
+          >
+            {savingProfile ? "保存中..." : "保存描述"}
+          </Button>
         </CardContent>
       </Card>
 

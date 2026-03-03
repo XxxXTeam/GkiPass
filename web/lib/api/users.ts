@@ -32,4 +32,8 @@ export const userApi = {
   /* 修改当前用户密码 */
   changePassword: (data: { old_password: string; new_password: string }) =>
     apiPost("/users/password/update", data),
+
+  /* 更新个人资料（头像/描述） */
+  updateProfile: (data: { avatar?: string; description?: string }) =>
+    apiPost("/users/profile/update", data),
 }
