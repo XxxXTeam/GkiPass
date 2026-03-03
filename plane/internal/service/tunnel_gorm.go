@@ -11,9 +11,9 @@ import (
 )
 
 /*
-  GormTunnelService 基于 GORM 的隧道服务
-  功能：管理隧道的完整生命周期（创建/查询/更新/删除/切换状态），
-  自动同步创建转发规则，支持加密配置和流量统计
+GormTunnelService 基于 GORM 的隧道服务
+功能：管理隧道的完整生命周期（创建/查询/更新/删除/切换状态），
+自动同步创建转发规则，支持加密配置和流量统计
 */
 type GormTunnelService struct {
 	db     *gorm.DB
@@ -21,7 +21,7 @@ type GormTunnelService struct {
 }
 
 /*
-  NewGormTunnelService 创建基于 GORM 的隧道服务
+NewGormTunnelService 创建基于 GORM 的隧道服务
 */
 func NewGormTunnelService(db *gorm.DB) *GormTunnelService {
 	return &GormTunnelService{
@@ -31,8 +31,8 @@ func NewGormTunnelService(db *gorm.DB) *GormTunnelService {
 }
 
 /*
-  CreateTunnelRequest 创建隧道请求
-  功能：定义创建隧道时的输入参数
+CreateTunnelRequest 创建隧道请求
+功能：定义创建隧道时的输入参数
 */
 type CreateTunnelRequest struct {
 	Name             string `json:"name" binding:"required"`
@@ -56,9 +56,9 @@ type CreateTunnelRequest struct {
 }
 
 /*
-  CreateTunnel 创建隧道
-  功能：在事务中创建隧道和关联的默认转发规则
-  流程：验证 → 创建隧道 → 创建默认规则 → 提交
+CreateTunnel 创建隧道
+功能：在事务中创建隧道和关联的默认转发规则
+流程：验证 → 创建隧道 → 创建默认规则 → 提交
 */
 func (s *GormTunnelService) CreateTunnel(req *CreateTunnelRequest, userID string) (*models.Tunnel, error) {
 	/* 参数验证 */
@@ -99,6 +99,13 @@ func (s *GormTunnelService) CreateTunnel(req *CreateTunnelRequest, userID string
 	loadBalanceMode := req.LoadBalanceMode
 	if loadBalanceMode == "" {
 		loadBalanceMode = "round-robin"
+	}
+
+	/* 检查名称重复 */
+	var nameCount int64
+	s.db.Model(&models.Tunnel{}).Where("name = ?", req.Name).Count(&nameCount)
+	if nameCount > 0 {
+		return nil, fmt.Errorf("隧道名称 '%s' 已存在", req.Name)
 	}
 
 	/* 检查端口冲突 */
@@ -185,8 +192,8 @@ func (s *GormTunnelService) CreateTunnel(req *CreateTunnelRequest, userID string
 }
 
 /*
-  GetTunnel 获取隧道详情
-  功能：根据 ID 查询隧道，预加载关联的规则和目标
+GetTunnel 获取隧道详情
+功能：根据 ID 查询隧道，预加载关联的规则和目标
 */
 func (s *GormTunnelService) GetTunnel(id string) (*models.Tunnel, error) {
 	var tunnel models.Tunnel
@@ -203,8 +210,8 @@ func (s *GormTunnelService) GetTunnel(id string) (*models.Tunnel, error) {
 }
 
 /*
-  ListTunnels 列出隧道
-  功能：查询隧道列表，支持按用户ID和启用状态过滤
+ListTunnels 列出隧道
+功能：查询隧道列表，支持按用户ID和启用状态过滤
 */
 func (s *GormTunnelService) ListTunnels(userID string, enabledOnly bool) ([]models.Tunnel, error) {
 	var tunnels []models.Tunnel
@@ -225,8 +232,8 @@ func (s *GormTunnelService) ListTunnels(userID string, enabledOnly bool) ([]mode
 }
 
 /*
-  UpdateTunnel 更新隧道
-  功能：更新隧道配置并同步更新关联规则
+UpdateTunnel 更新隧道
+功能：更新隧道配置并同步更新关联规则
 */
 func (s *GormTunnelService) UpdateTunnel(id string, req *CreateTunnelRequest) (*models.Tunnel, error) {
 	var tunnel models.Tunnel
@@ -319,8 +326,8 @@ func (s *GormTunnelService) UpdateTunnel(id string, req *CreateTunnelRequest) (*
 }
 
 /*
-  DeleteTunnel 删除隧道
-  功能：在事务中删除隧道及其关联的规则、目标、ACL
+DeleteTunnel 删除隧道
+功能：在事务中删除隧道及其关联的规则、目标、ACL
 */
 func (s *GormTunnelService) DeleteTunnel(id string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
@@ -355,8 +362,8 @@ func (s *GormTunnelService) DeleteTunnel(id string) error {
 }
 
 /*
-  ToggleTunnel 切换隧道启用/禁用状态
-  功能：同时更新隧道和其关联规则的启用状态
+ToggleTunnel 切换隧道启用/禁用状态
+功能：同时更新隧道和其关联规则的启用状态
 */
 func (s *GormTunnelService) ToggleTunnel(id string, enabled bool) (*models.Tunnel, error) {
 	return nil, s.db.Transaction(func(tx *gorm.DB) error {
@@ -379,8 +386,8 @@ func (s *GormTunnelService) ToggleTunnel(id string, enabled bool) (*models.Tunne
 }
 
 /*
-  UpdateTraffic 更新隧道流量统计
-  功能：原子性更新隧道的入站/出站流量计数器和最后活跃时间
+UpdateTraffic 更新隧道流量统计
+功能：原子性更新隧道的入站/出站流量计数器和最后活跃时间
 */
 func (s *GormTunnelService) UpdateTraffic(tunnelID string, bytesIn, bytesOut int64) error {
 	return s.db.Model(&models.Tunnel{}).
@@ -394,8 +401,8 @@ func (s *GormTunnelService) UpdateTraffic(tunnelID string, bytesIn, bytesOut int
 }
 
 /*
-  GetTunnelsByGroupID 获取节点组关联的所有隧道
-  功能：查询入口组或出口组匹配的已启用隧道
+GetTunnelsByGroupID 获取节点组关联的所有隧道
+功能：查询入口组或出口组匹配的已启用隧道
 */
 func (s *GormTunnelService) GetTunnelsByGroupID(groupID string) ([]models.Tunnel, error) {
 	var tunnels []models.Tunnel
@@ -413,8 +420,8 @@ func (s *GormTunnelService) GetTunnelsByGroupID(groupID string) ([]models.Tunnel
 }
 
 /*
-  GetRulesByTunnelID 获取隧道的所有规则
-  功能：查询指定隧道的转发规则列表，预加载 ACL
+GetRulesByTunnelID 获取隧道的所有规则
+功能：查询指定隧道的转发规则列表，预加载 ACL
 */
 func (s *GormTunnelService) GetRulesByTunnelID(tunnelID string) ([]models.Rule, error) {
 	var rules []models.Rule
@@ -432,9 +439,9 @@ func (s *GormTunnelService) GetRulesByTunnelID(tunnelID string) ([]models.Rule, 
 }
 
 /*
-  checkPortConflict 检查端口冲突
-  功能：在同一个入口节点组中检测端口是否已被占用
-  excludeTunnelID 排除当前隧道（用于更新场景）
+checkPortConflict 检查端口冲突
+功能：在同一个入口节点组中检测端口是否已被占用
+excludeTunnelID 排除当前隧道（用于更新场景）
 */
 func (s *GormTunnelService) checkPortConflict(ingressGroupID string, port int, excludeTunnelID string) error {
 	if ingressGroupID == "" {
