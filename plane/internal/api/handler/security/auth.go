@@ -95,6 +95,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	/* 更新最后登录时间 */
+	h.userSvc.UpdateLastLogin(user.ID)
+
 	/* 生成 JWT 令牌 */
 	token, err := middleware.GenerateJWT(
 		user.ID,

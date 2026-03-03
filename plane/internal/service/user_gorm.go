@@ -444,6 +444,16 @@ func (s *GormUserService) DeleteUser(targetID, operatorID string) error {
 }
 
 /*
+UpdateLastLogin 更新用户最后登录时间
+*/
+func (s *GormUserService) UpdateLastLogin(userID string) {
+	if err := s.db.Model(&models.User{}).Where("id = ?", userID).
+		Update("last_login", time.Now()).Error; err != nil {
+		s.logger.Error("更新最后登录时间失败", zap.String("userID", userID), zap.Error(err))
+	}
+}
+
+/*
 GetUserCount 获取用户总数
 */
 func (s *GormUserService) GetUserCount() (int64, error) {
