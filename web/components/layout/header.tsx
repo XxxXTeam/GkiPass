@@ -190,7 +190,9 @@ export function Header() {
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel className="font-normal">
               <p className="text-sm font-medium">{username || "用户"}</p>
-              <p className="text-xs text-muted-foreground">管理员</p>
+              <p className="text-xs text-muted-foreground">
+                {user?.role === "admin" ? "管理员" : user?.role === "agent" ? "代理" : "用户"}
+              </p>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem>

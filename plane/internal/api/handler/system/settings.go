@@ -3,10 +3,10 @@ package system
 import (
 	"encoding/json"
 
-	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/api/response"
-	"gkipass/plane/internal/types"
+	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/pkg/logger"
+	"gkipass/plane/internal/types"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -178,15 +178,15 @@ func (h *SettingsHandler) UpdateGeneralSettings(c *gin.Context) {
 
 // SecuritySettings 安全设置结构
 type SecuritySettings struct {
-	PasswordMinLength        int  `json:"password_min_length"`
+	PasswordMinLength        int  `json:"password_min_length" binding:"min=4,max=32"`
 	PasswordRequireUppercase bool `json:"password_require_uppercase"`
 	PasswordRequireLowercase bool `json:"password_require_lowercase"`
 	PasswordRequireNumber    bool `json:"password_require_number"`
 	PasswordRequireSpecial   bool `json:"password_require_special"`
-	LoginMaxAttempts         int  `json:"login_max_attempts"`
-	LoginLockoutDuration     int  `json:"login_lockout_duration"` // 分钟
+	LoginMaxAttempts         int  `json:"login_max_attempts" binding:"min=1,max=100"`
+	LoginLockoutDuration     int  `json:"login_lockout_duration" binding:"min=1,max=1440"` /* 分钟，最大24小时 */
 	Enable2FA                bool `json:"enable_2fa"`
-	SessionTimeout           int  `json:"session_timeout"` // 小时
+	SessionTimeout           int  `json:"session_timeout" binding:"min=1,max=720"` /* 小时，最大30天 */
 }
 
 // GetSecuritySettings 获取安全设置
