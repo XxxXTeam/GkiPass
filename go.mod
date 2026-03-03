@@ -18,7 +18,7 @@ require (
 	github.com/redis/go-redis/v9 v9.14.0
 	github.com/wenlng/go-captcha-assets v1.0.7
 	github.com/wenlng/go-captcha/v2 v2.0.4
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.46.0
 	golang.org/x/oauth2 v0.32.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
