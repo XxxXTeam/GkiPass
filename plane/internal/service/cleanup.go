@@ -69,6 +69,9 @@ func (s *CleanupService) runCleanup() {
 
 	// 5. 清理旧监控数据（保留 7 天）
 	s.cleanupOldMonitoringData()
+
+	// 6. 提醒即将过期的订阅（3 天内）
+	s.notifyExpiringSubscriptions()
 }
 
 /* cleanupExpiredSubscriptions 清理过期订阅 */
@@ -95,6 +98,48 @@ func (s *CleanupService) cleanupInactiveTunnels() {
 // resetTrafficIfNeeded 重置流量（如果到达重置时间）
 func (s *CleanupService) resetTrafficIfNeeded() {
 	logger.Debug("检查流量重置...")
+}
+
+/*
+notifyExpiringSubscriptions 提醒即将过期的订阅
+功能：查找 3 天内即将过期的活跃订阅，为用户创建通知提醒
+*/
+func (s *CleanupService) notifyExpiringSubscriptions() {
+	var subs []models.Subscription
+	deadline := time.Now().AddDate(0, 0, 3)
+	if err := s.dao.DB.
+		Where("status = 'active' AND expire_at <= ? AND expire_at > ?", deadline, time.Now()).
+		Preload("User").
+		Find(&subs).Error; err != nil {
+		logger.Error("查询即将过期订阅失败", zap.Error(err))
+		return
+	}
+
+	for _, sub := range subs {
+		/* 检查是否已发送过提醒（防重复） */
+		var count int64
+		s.dao.DB.Model(&models.Notification{}).
+			Where("user_id = ? AND type = 'subscription_expiring' AND created_at > ?",
+				sub.UserID, time.Now().AddDate(0, 0, -1)).
+			Count(&count)
+		if count > 0 {
+			continue
+		}
+
+		notification := &models.Notification{
+			UserID:  sub.UserID,
+			Type:    "subscription_expiring",
+			Title:   "订阅即将过期",
+			Content: "您的订阅将在 3 天内过期，请及时续费以避免服务中断。",
+		}
+		if err := s.dao.DB.Create(notification).Error; err != nil {
+			logger.Error("创建过期提醒通知失败", zap.String("userID", sub.UserID), zap.Error(err))
+		}
+	}
+
+	if len(subs) > 0 {
+		logger.Info("已发送订阅过期提醒", zap.Int("count", len(subs)))
+	}
 }
 
 /* cleanupExpiredKeys 清理过期的隧道加密密钥 */
