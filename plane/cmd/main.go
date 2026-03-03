@@ -230,7 +230,13 @@ func main() {
 
 	logger.Info("✓ GkiPass 控制面板启动完成",
 		zap.Duration("总耗时", time.Since(startupBegin)),
-		zap.String("监听地址", http2Addr))
+		zap.String("监听地址", http2Addr),
+		zap.String("数据库", cfg.Database.Type),
+		zap.Bool("Redis", cfg.Redis.Addr != ""),
+		zap.Bool("TLS", cfg.TLS.Enabled),
+		zap.Bool("HTTP3", cfg.Server.EnableHTTP3),
+		zap.Int("WS最大连接", cfg.Server.WSMaxConnections),
+		zap.String("模式", cfg.Server.Mode))
 
 	/* 阶段 7：等待退出信号 → 优雅关闭 */
 	quit := make(chan os.Signal, 1)
