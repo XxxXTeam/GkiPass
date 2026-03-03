@@ -92,6 +92,7 @@ export default function DashboardPage() {
           icon: Network,
           color: "text-blue-500",
           bg: "bg-blue-500/10",
+          href: "/dashboard/tunnels",
         },
         {
           title: "节点总数",
@@ -100,6 +101,7 @@ export default function DashboardPage() {
           icon: Server,
           color: "text-green-500",
           bg: "bg-green-500/10",
+          href: "/dashboard/nodes",
         },
         {
           title: "用户总数",
@@ -108,6 +110,7 @@ export default function DashboardPage() {
           icon: Users,
           color: "text-violet-500",
           bg: "bg-violet-500/10",
+          href: "/dashboard/users",
         },
         {
           title: "当前连接",
@@ -116,6 +119,7 @@ export default function DashboardPage() {
           icon: Zap,
           color: "text-amber-500",
           bg: "bg-amber-500/10",
+          href: "/dashboard/monitoring",
         },
       ]
     : []
@@ -176,24 +180,26 @@ export default function DashboardPage() {
               </Card>
             ))
           : statCards.map((card) => (
-              <Card key={card.title}>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-1">
-                      <p className="text-sm text-muted-foreground">
-                        {card.title}
-                      </p>
-                      <p className="text-3xl font-bold">{card.value}</p>
-                      <Badge variant="secondary" className="text-xs">
-                        {card.sub}
-                      </Badge>
+              <Link key={card.title} href={card.href}>
+                <Card className="transition-colors hover:border-primary/50 cursor-pointer">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-1">
+                        <p className="text-sm text-muted-foreground">
+                          {card.title}
+                        </p>
+                        <p className="text-3xl font-bold">{card.value}</p>
+                        <Badge variant="secondary" className="text-xs">
+                          {card.sub}
+                        </Badge>
+                      </div>
+                      <div className={`rounded-lg p-3 ${card.bg}`}>
+                        <card.icon className={`h-5 w-5 ${card.color}`} />
+                      </div>
                     </div>
-                    <div className={`rounded-lg p-3 ${card.bg}`}>
-                      <card.icon className={`h-5 w-5 ${card.color}`} />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </Link>
             ))}
       </div>
 

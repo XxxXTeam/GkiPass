@@ -47,6 +47,9 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 			}
 		}
 
+		/* Vary: Origin 防止 CDN/反向代理缓存污染（不同 Origin 的响应不能互用） */
+		c.Header("Vary", "Origin")
+
 		/* 跨域请求：回显已验证的 Origin，支持 credentials */
 		c.Header("Access-Control-Allow-Origin", origin)
 		c.Header("Access-Control-Allow-Credentials", "true")
