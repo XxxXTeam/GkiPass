@@ -10,6 +10,7 @@ import (
 	"gkipass/plane/internal/api/handler/tunnel"
 	"gkipass/plane/internal/api/handler/user"
 	"gkipass/plane/internal/api/middleware"
+	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/service"
 	"gkipass/plane/internal/ws"
 
@@ -28,6 +29,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 
 	// 全局中间件
 	router.Use(middleware.Recovery())
+	router.Use(middleware.RequestID())
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.BodyLimit(2 << 20)) /* 2MB 请求体上限，防止 OOM */
 	router.Use(middleware.Logger())
@@ -67,6 +69,18 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 		goCaptchaHandler := security.NewGoCaptchaHandler(app)
 		v1.GET("/captcha/gocaptcha/generate", goCaptchaHandler.Generate)
 		v1.POST("/captcha/gocaptcha/verify", goCaptchaHandler.Verify)
+
+		/* 系统状态（公开，供前端判断是否已初始化、是否开放注册） */
+		v1.GET("/setup/status", func(c *gin.Context) {
+			var userCount int64
+			app.DB.GormDB.Model(&models.User{}).Count(&userCount)
+			c.JSON(200, gin.H{
+				"initialized":     userCount > 0,
+				"captcha_enabled": app.Config.Captcha.Enabled,
+				"captcha_type":    app.Config.Captcha.Type,
+				"github_oauth":    app.Config.Auth.GitHub.Enabled,
+			})
+		})
 
 		// 公开公告
 		announcementHandler := system.NewAnnouncementHandler(app)

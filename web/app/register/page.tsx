@@ -1,81 +1,77 @@
 "use client"
 
 import { Suspense, useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
-import { Lock, User, Eye, EyeOff } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Lock, User, Mail, Eye, EyeOff, ArrowLeft } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
 import { toast } from "sonner"
 import { authApi } from "@/lib/api/auth"
-import { announcementApi, type Announcement } from "@/lib/api/announcements"
 import { setToken, setRole, isAuthenticated } from "@/lib/auth"
 import Link from "next/link"
 
-export default function LoginPage() {
+export default function RegisterPage() {
   return (
     <Suspense fallback={
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       </div>
     }>
-      <LoginForm />
+      <RegisterForm />
     </Suspense>
   )
 }
 
-function LoginForm() {
+function RegisterForm() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const [form, setForm] = useState({ username: "", password: "" })
+  const [form, setForm] = useState({ username: "", password: "", confirmPassword: "", email: "" })
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [rememberMe, setRememberMe] = useState(false)
-  const [announcements, setAnnouncements] = useState<Announcement[]>([])
 
-  /* 已登录自动跳转 + 加载公告 + 恢复记住的用户名 */
   useEffect(() => {
     if (isAuthenticated()) {
       router.replace("/dashboard")
     }
-    const saved = localStorage.getItem("gkipass_remember_username")
-    if (saved) {
-      setForm((prev) => ({ ...prev, username: saved }))
-      setRememberMe(true)
-    }
-    announcementApi.listActive().then((res) => {
-      if (res.success && res.data) setAnnouncements(res.data.slice(0, 2))
-    }).catch(() => {})
   }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.username || !form.password) {
-      toast.error("请输入用户名和密码")
+    if (!form.username || !form.password || !form.email) {
+      toast.error("请填写所有必填字段")
+      return
+    }
+    if (form.username.length < 3) {
+      toast.error("用户名至少 3 个字符")
+      return
+    }
+    if (form.password.length < 8) {
+      toast.error("密码至少 8 个字符")
+      return
+    }
+    if (form.password !== form.confirmPassword) {
+      toast.error("两次输入的密码不一致")
       return
     }
 
     setLoading(true)
     try {
-      const res = await authApi.login(form)
+      const res = await authApi.register({
+        username: form.username,
+        password: form.password,
+        email: form.email,
+      })
       if (res.success && res.data) {
         setToken(res.data.token)
         if (res.data.role) setRole(res.data.role)
-        if (rememberMe) {
-          localStorage.setItem("gkipass_remember_username", form.username)
-        } else {
-          localStorage.removeItem("gkipass_remember_username")
-        }
-        toast.success("登录成功")
-        const redirect = searchParams.get("redirect") || "/dashboard"
-        router.push(redirect)
+        toast.success(res.data.is_first_user ? "管理员账户创建成功" : "注册成功")
+        router.push("/dashboard")
       } else {
-        toast.error(res.message || "登录失败")
+        toast.error(res.message || "注册失败")
       }
     } catch {
-      toast.error("登录失败，请检查用户名和密码")
+      toast.error("注册失败，请稍后重试")
     } finally {
       setLoading(false)
     }
@@ -90,14 +86,13 @@ function LoginForm() {
             G
           </div>
           <h1 className="text-2xl font-bold">GkiPass</h1>
-          <p className="text-sm text-muted-foreground">隧道管理控制面板</p>
+          <p className="text-sm text-muted-foreground">创建新账户</p>
         </div>
 
-        {/* 登录卡片 */}
         <Card>
           <CardHeader className="space-y-1">
-            <CardTitle className="text-xl">登录</CardTitle>
-            <CardDescription>输入您的账号信息以访问控制面板</CardDescription>
+            <CardTitle className="text-xl">注册</CardTitle>
+            <CardDescription>填写以下信息创建您的账户</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -109,9 +104,25 @@ function LoginForm() {
                     id="username"
                     value={form.username}
                     onChange={(e) => setForm({ ...form, username: e.target.value })}
-                    placeholder="请输入用户名"
+                    placeholder="至少 3 个字符"
                     className="pl-9"
                     autoComplete="username"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="email">邮箱</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="email"
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    placeholder="your@email.com"
+                    className="pl-9"
+                    autoComplete="email"
                   />
                 </div>
               </div>
@@ -125,9 +136,9 @@ function LoginForm() {
                     type={showPassword ? "text" : "password"}
                     value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    placeholder="请输入密码"
+                    placeholder="至少 8 个字符"
                     className="pl-9 pr-9"
-                    autoComplete="current-password"
+                    autoComplete="new-password"
                   />
                   <Button
                     type="button"
@@ -145,46 +156,42 @@ function LoginForm() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="remember"
-                  checked={rememberMe}
-                  onCheckedChange={(v) => setRememberMe(v === true)}
-                />
-                <Label htmlFor="remember" className="text-sm font-normal text-muted-foreground cursor-pointer">
-                  记住用户名
-                </Label>
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword">确认密码</Label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="confirmPassword"
+                    type={showPassword ? "text" : "password"}
+                    value={form.confirmPassword}
+                    onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })}
+                    placeholder="再次输入密码"
+                    className="pl-9"
+                    autoComplete="new-password"
+                  />
+                </div>
               </div>
 
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? "登录中..." : "登录"}
+                {loading ? "注册中..." : "创建账户"}
               </Button>
             </form>
 
             <div className="mt-4 text-center text-sm text-muted-foreground">
-              还没有账户？
-              <Link href="/register" className="ml-1 text-primary hover:underline">
-                立即注册
+              已有账户？
+              <Link href="/login" className="ml-1 text-primary hover:underline">
+                返回登录
               </Link>
             </div>
           </CardContent>
         </Card>
 
-        {/* 活跃公告 */}
-        {announcements.length > 0 && (
-          <div className="space-y-2">
-            {announcements.map((a) => (
-              <div key={a.id} className="rounded-lg border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">{a.title}</span>
-                {a.content && <span className="ml-1">{a.content}</span>}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <p className="text-center text-xs text-muted-foreground">
-          GkiPass v2.0.0 - 高性能双向隧道转发系统
-        </p>
+        <div className="text-center">
+          <Link href="/login" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <ArrowLeft className="h-3 w-3" />
+            返回登录页
+          </Link>
+        </div>
       </div>
     </div>
   )

@@ -144,9 +144,28 @@ export interface LoginRequest {
   captcha_code?: string
 }
 
+export interface RegisterRequest {
+  username: string
+  password: string
+  email: string
+  captcha_id?: string
+  captcha_code?: string
+}
+
 export interface LoginResponse {
   token: string
-  user: User
+  user_id: string
+  username: string
+  role: string
+  expires_at: number
+  is_first_user?: boolean
+}
+
+export interface SetupStatus {
+  initialized: boolean
+  captcha_enabled: boolean
+  captcha_type: string
+  github_oauth: boolean
 }
 
 /* 套餐相关类型（对齐后端 GORM models.Plan） */
