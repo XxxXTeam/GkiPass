@@ -333,18 +333,22 @@ func (s *GormUserService) GetUserWithRelations(id string) (*models.User, error) 
 ListUsers 列出所有用户（管理员用）
 功能：返回用户列表，隐藏密码字段（通过json:"-"已处理）
 */
-func (s *GormUserService) ListUsers(page, pageSize int) ([]models.User, int64, error) {
+func (s *GormUserService) ListUsers(page, pageSize int, roleFilter ...string) ([]models.User, int64, error) {
 	var users []models.User
 	var total int64
 
-	s.db.Model(&models.User{}).Count(&total)
+	q := s.db.Model(&models.User{})
+	if len(roleFilter) > 0 && roleFilter[0] != "" {
+		q = q.Where("role = ?", roleFilter[0])
+	}
+	q.Count(&total)
 
 	offset := (page - 1) * pageSize
 	if offset < 0 {
 		offset = 0
 	}
 
-	if err := s.db.
+	if err := q.
 		Order("created_at DESC").
 		Offset(offset).
 		Limit(pageSize).

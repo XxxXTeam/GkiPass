@@ -225,6 +225,7 @@ ListUsers 列出所有用户（管理员）
 func (h *UserHandler) ListUsers(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	roleFilter := c.Query("role") /* 可选：admin/user/guest */
 	if page < 1 {
 		page = 1
 	}
@@ -232,7 +233,7 @@ func (h *UserHandler) ListUsers(c *gin.Context) {
 		pageSize = 20
 	}
 
-	users, total, err := h.userSvc.ListUsers(page, pageSize)
+	users, total, err := h.userSvc.ListUsers(page, pageSize, roleFilter)
 	if err != nil {
 		response.GinInternalError(c, "获取用户列表失败", err)
 		return
