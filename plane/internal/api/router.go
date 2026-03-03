@@ -36,6 +36,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 	router.Use(middleware.BodyLimit(2 << 20)) /* 2MB 请求体上限，防止 OOM */
 	router.Use(middleware.Logger())
 	router.Use(middleware.CORS(app.Config.Server.CORSAllowedOrigins))
+	router.Use(middleware.Metrics())
 
 	/* 健康检查：返回服务状态、版本号、启动时间、运行时长、数据库连接池 */
 	startedAt := time.Now()

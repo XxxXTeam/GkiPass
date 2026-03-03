@@ -163,6 +163,15 @@ func (h *GinTunnelHandler) Toggle(c *gin.Context) {
 		return
 	}
 
+	action := "禁用"
+	if req.Enabled {
+		action = "启用"
+	}
+	h.logger.Info("隧道状态已切换",
+		zap.String("tunnel_id", id),
+		zap.String("action", action),
+		zap.String("operator", middleware.GetUserID(c)))
+
 	/* 重新获取更新后的隧道数据 */
 	tunnel, _ := h.tunnelSvc.GetTunnel(id)
 
