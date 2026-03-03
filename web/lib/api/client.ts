@@ -28,6 +28,25 @@ const client: AxiosInstance = axios.create({
   },
 })
 
+/*
+  简单重试机制：网络错误或 5xx 错误自动重试 1 次（延迟 1 秒）
+  避免网络抖动导致用户操作失败，仅对 GET 请求重试（幂等安全）
+*/
+client.interceptors.response.use(undefined, async (error) => {
+  const config = error.config
+  if (
+    config &&
+    !config._retried &&
+    config.method === "get" &&
+    (!error.response || error.response.status >= 500)
+  ) {
+    config._retried = true
+    await new Promise((r) => setTimeout(r, 1000))
+    return client(config)
+  }
+  return Promise.reject(error)
+})
+
 /* 请求拦截：注入 JWT Token */
 client.interceptors.request.use(
   (config) => {
