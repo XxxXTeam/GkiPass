@@ -35,6 +35,7 @@ type Manager struct {
 	unregister     chan *NodeConnection
 	broadcast      chan *Message
 	maxConnections int /* 最大连接数限制，0 表示不限制 */
+	stopChan       chan struct{}
 	mu             sync.RWMutex
 }
 
@@ -50,6 +51,7 @@ func NewManager(maxConnections ...int) *Manager {
 		unregister:     make(chan *NodeConnection, 10),
 		broadcast:      make(chan *Message, 100),
 		maxConnections: maxConn,
+		stopChan:       make(chan struct{}),
 	}
 }
 
@@ -86,6 +88,11 @@ func (m *Manager) Run() {
 
 		case <-ticker.C:
 			m.checkDeadConnections()
+
+		case <-m.stopChan:
+			m.closeAllConnections()
+			logger.Info("WebSocket 管理器已停止")
+			return
 		}
 	}
 }
@@ -262,4 +269,25 @@ type WSError struct {
 
 func (e *WSError) Error() string {
 	return e.Message
+}
+
+/*
+closeAllConnections 关闭所有节点连接
+功能：优雅关闭时断开所有 WebSocket 连接
+*/
+func (m *Manager) closeAllConnections() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for nodeID, conn := range m.connections {
+		conn.closeSend()
+		conn.Conn.Close()
+		logger.Info("节点连接已关闭（服务器关闭）", zap.String("nodeID", nodeID))
+	}
+	m.connections = make(map[string]*NodeConnection)
+}
+
+/* Stop 停止管理器 */
+func (m *Manager) Stop() {
+	close(m.stopChan)
 }

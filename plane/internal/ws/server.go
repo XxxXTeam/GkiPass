@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"gkipass/plane/internal/db/dao"
-	"gkipass/plane/internal/service"
 	"gkipass/plane/internal/pkg/logger"
+	"gkipass/plane/internal/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -77,6 +77,12 @@ func (s *Server) HandleWebSocket(c *gin.Context) {
 
 	// 处理连接
 	s.handler.HandleConnection(conn)
+}
+
+/* Stop 停止 WebSocket 服务器，关闭所有节点连接 */
+func (s *Server) Stop() {
+	s.manager.Stop()
+	logger.Info("WebSocket 服务器已停止")
 }
 
 // GetManager 获取管理器（用于外部调用）

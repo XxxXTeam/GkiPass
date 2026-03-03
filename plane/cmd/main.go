@@ -241,6 +241,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	/* 先停止接受新请求 */
 	if err := http2Server.Shutdown(ctx); err != nil {
 		logger.Error("关闭 HTTP/2 服务器失败", zap.Error(err))
 	}
@@ -250,7 +251,10 @@ func main() {
 		}
 	}
 
-	logger.Info("✓ 所有服务器已停止")
+	/* 断开所有 WebSocket 节点连接 */
+	wsServer.Stop()
+
+	logger.Info("✓ 所有服务已停止")
 }
 
 func printBanner() {

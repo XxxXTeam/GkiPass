@@ -18,7 +18,9 @@ func Recovery() gin.HandlerFunc {
 		defer func() {
 			if err := recover(); err != nil {
 				stack := debug.Stack()
+				requestID := GetRequestID(c)
 				zap.L().Error("请求处理 panic",
+					zap.String("request_id", requestID),
 					zap.Any("error", err),
 					zap.String("method", c.Request.Method),
 					zap.String("path", c.Request.URL.Path),
@@ -26,8 +28,10 @@ func Recovery() gin.HandlerFunc {
 					zap.ByteString("stack", stack),
 				)
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"success": false,
-					"error":   "Internal server error",
+					"success":    false,
+					"code":       500,
+					"message":    "服务器内部错误",
+					"request_id": requestID,
 				})
 			}
 		}()
