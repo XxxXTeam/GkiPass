@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
@@ -37,6 +38,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { removeToken } from "@/lib/auth"
 import { useUser } from "@/lib/user-context"
+import { notificationApi } from "@/lib/api/notifications"
 
 /*
   侧边栏导航配置
@@ -67,6 +69,16 @@ const adminNav = [
 export function AppSidebar() {
   const pathname = usePathname()
   const { user } = useUser()
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  /* 获取未读通知数量 */
+  useEffect(() => {
+    notificationApi.list().then((res) => {
+      if (res.success && res.data) {
+        setUnreadCount(res.data.filter((n: { read: boolean }) => !n.read).length)
+      }
+    }).catch(() => {})
+  }, [])
 
   const isAdmin = user?.role === "admin"
 
@@ -100,6 +112,11 @@ export function AppSidebar() {
                     <Link href={item.href}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
+                      {item.href === "/dashboard/notifications" && unreadCount > 0 && (
+                        <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-white">
+                          {unreadCount > 99 ? "99+" : unreadCount}
+                        </span>
+                      )}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
