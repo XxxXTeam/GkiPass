@@ -72,8 +72,8 @@ export function TrafficChart({ data, height = 260 }: TrafficChartProps) {
             borderRadius: "8px",
             fontSize: "12px",
           }}
-          formatter={(value: number, name: string) => [
-            formatBytes(value),
+          formatter={(value?: number, name?: string) => [
+            formatBytes(value ?? 0),
             name === "inbound" ? "入站" : "出站",
           ]}
           labelFormatter={(label) => `时间: ${label}`}

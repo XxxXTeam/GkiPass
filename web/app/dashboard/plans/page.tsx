@@ -25,8 +25,15 @@ import { planApi } from "@/lib/api/plans"
 import type { Plan } from "@/lib/types"
 import { formatBytes } from "@/lib/utils"
 
-const defaultForm = {
-  name: "", description: "", price: 0, duration: 1, duration_unit: "month" as const,
+interface PlanForm {
+  name: string; description: string; price: number; duration: number;
+  duration_unit: "month" | "year" | "permanent";
+  traffic_limit: number; rule_limit: number; speed_limit: number;
+  connection_limit: number; enabled: boolean;
+}
+
+const defaultForm: PlanForm = {
+  name: "", description: "", price: 0, duration: 1, duration_unit: "month",
   traffic_limit: 0, rule_limit: 10, speed_limit: 0, connection_limit: 0, enabled: true,
 }
 
@@ -59,7 +66,7 @@ export default function PlansPage() {
     setEditingId(plan.id)
     setForm({
       name: plan.name, description: plan.description, price: plan.price,
-      duration: plan.duration, duration_unit: plan.duration_unit || "month",
+      duration: plan.duration, duration_unit: (plan.duration_unit || "month") as "month" | "year" | "permanent",
       traffic_limit: plan.traffic_limit, rule_limit: plan.rule_limit,
       speed_limit: plan.speed_limit, connection_limit: plan.connection_limit,
       enabled: plan.enabled,
