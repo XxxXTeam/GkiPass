@@ -20,7 +20,7 @@ require (
 	github.com/wenlng/go-captcha/v2 v2.0.4
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.46.0
-	golang.org/x/oauth2 v0.32.0
+	golang.org/x/oauth2 v0.35.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.6.0
