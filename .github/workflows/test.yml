@@ -17,10 +17,47 @@ permissions:
   pull-requests: write
 
 jobs:
+  # 第一步：构建前端并共享产物
+  test-web:
+    name: Test Web Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run linter
+        working-directory: web
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Build
+        working-directory: web
+        run: npx next build
+
+      # 上传 out/ 供后端测试使用
+      - name: Upload frontend static files
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-out
+          path: web/out/
+          retention-days: 1
+
+  # 第二步：后端测试，依赖前端产物
   test-backend:
     name: Test Backend
+    needs: [test-web]
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -31,20 +68,24 @@ jobs:
           go-version: '1.24'
           cache: true
 
+      # 下载前端构建产物
+      - name: Download frontend static files
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-out
+          path: plane/frontend/out
+
       - name: Install dependencies
         run: |
-          mkdir -p plane/frontend/out && touch plane/frontend/out/PLACEHOLDER
           go mod tidy
           cd client && go mod download
 
       - name: Run tests for plane
-        run: |
-          go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Run tests for client
         working-directory: client
-        run: |
-          go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -53,45 +94,4 @@ jobs:
           flags: backend
           name: backend-coverage
           fail_ci_if_error: false
-
-  test-web:
-    name: Test Web Frontend
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Check if web directory exists
-        id: check-web
-        run: |
-          if [ -f "web/package.json" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️ web/package.json not found, skipping web tests"
-          fi
-
-      - name: Setup Node.js
-        if: steps.check-web.outputs.exists == 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/package.json
-
-      - name: Install dependencies
-        if: steps.check-web.outputs.exists == 'true'
-        working-directory: web
-        run: npm ci
-
-      - name: Run linter
-        if: steps.check-web.outputs.exists == 'true'
-        working-directory: web
-        run: npm run lint
-
-      - name: Build
-        if: steps.check-web.outputs.exists == 'true'
-        working-directory: web
-        run: npm run build
 

@@ -11,12 +11,57 @@ permissions:
   packages: write
 
 jobs:
+  # 第一步：构建前端，产出 out/ 静态文件供后端嵌入
+  build-web:
+    name: Build Web Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build static export
+        working-directory: web
+        run: npx next build
+        env:
+          NODE_ENV: production
+
+      # 上传 out/ 目录供后端 job 下载并嵌入
+      - name: Upload frontend static files
+        uses: actions/upload-artifact@v6
+        with:
+          name: frontend-out
+          path: web/out/
+          retention-days: 1
+
+      # 同时打包完整前端产物供 release 下载
+      - name: Package web build
+        run: tar czf gkipass-web.tar.gz -C web/out .
+
+      - name: Upload web release artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: gkipass-web
+          path: gkipass-web.tar.gz
+          retention-days: 30
+
+  # 第二步：后端构建，依赖前端产物（通过 go:embed 嵌入）
   build-backend:
     name: Build Backend Components
-    runs-on: ${{ matrix.os }}
+    needs: [build-web]
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest]
         target:
           - goos: linux
             goarch: amd64
@@ -46,9 +91,15 @@ jobs:
           go-version: '1.24'
           cache: true
 
+      # 下载前端构建产物到 plane/frontend/out/
+      - name: Download frontend static files
+        uses: actions/download-artifact@v7
+        with:
+          name: frontend-out
+          path: plane/frontend/out
+
       - name: Get dependencies
         run: |
-          mkdir -p plane/frontend/out && touch plane/frontend/out/PLACEHOLDER
           go mod tidy
           cd client && go mod download
 
@@ -91,43 +142,7 @@ jobs:
           path: bin/gkipass-${{ matrix.target.suffix }}.*
           retention-days: 30
 
-  build-web:
-    name: Build Web Frontend
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/package.json
-
-      - name: Install dependencies
-        working-directory: web
-        run: npm ci
-
-      - name: Build web
-        working-directory: web
-        run: npm run build
-        env:
-          NODE_ENV: production
-
-      - name: Package web build
-        run: |
-          cd web
-          tar czf ../gkipass-web.tar.gz .next public package.json next.config.ts
-
-      - name: Upload web artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: gkipass-web
-          path: gkipass-web.tar.gz
-          retention-days: 30
-
+  # 第三步：创建 Release
   create-release:
     name: Create GitHub Release
     needs: [build-backend, build-web]
@@ -147,15 +162,12 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          # 获取上一个标签
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
           if [ -z "$PREV_TAG" ]; then
             CHANGELOG=$(git log --pretty=format:"- %s (%h) - %an" --no-merges)
           else
             CHANGELOG=$(git log $PREV_TAG..HEAD --pretty=format:"- %s (%h) - %an" --no-merges)
           fi
-          
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -165,55 +177,24 @@ jobs:
         with:
           name: Release ${{ github.ref_name }}
           body: |
-            ## 🚀 GKI Pass ${{ github.ref_name }}
+            ## GKI Pass ${{ github.ref_name }}
             
-            ### 📦 下载
+            ### 下载
             
-            请根据您的操作系统下载相应的版本：
+            | 平台 | 文件 |
+            |------|------|
+            | Linux (amd64) | gkipass-linux-amd64.tar.gz |
+            | Linux (arm64) | gkipass-linux-arm64.tar.gz |
+            | Windows (amd64) | gkipass-windows-amd64.exe.zip |
+            | macOS (Intel) | gkipass-darwin-amd64.tar.gz |
+            | macOS (Apple Silicon) | gkipass-darwin-arm64.tar.gz |
+            | Web 前端 | gkipass-web.tar.gz |
             
-            - **Linux (amd64)**: gkipass-linux-amd64.tar.gz
-            - **Linux (arm64)**: gkipass-linux-arm64.tar.gz
-            - **Windows (amd64)**: gkipass-windows-amd64.exe.zip
-            - **macOS (Intel)**: gkipass-darwin-amd64.tar.gz
-            - **macOS (Apple Silicon)**: gkipass-darwin-arm64.tar.gz
-            - **Web Frontend**: gkipass-web.tar.gz
+            > 服务端二进制已内嵌前端静态文件，无需单独部署前端。
             
-            ### 📝 更新日志
+            ### 更新日志
             
             ${{ steps.changelog.outputs.changelog }}
-            
-            ### 🔧 安装说明
-            
-            #### 服务端 (Plane)
-            ```bash
-            # Linux/macOS
-            tar xzf gkipass-linux-amd64.tar.gz
-            chmod +x gkipass-plane-linux-amd64
-            ./gkipass-plane-linux-amd64
-            
-            # Windows
-            unzip gkipass-windows-amd64.exe.zip
-            gkipass-plane-windows-amd64.exe
-            ```
-            
-            #### 客户端 (Client)
-            ```bash
-            # Linux/macOS
-            tar xzf gkipass-linux-amd64.tar.gz
-            chmod +x gkipass-client-linux-amd64
-            ./gkipass-client-linux-amd64 -config=config.yaml
-            ```
-            
-            #### Web 前端
-            ```bash
-            tar xzf gkipass-web.tar.gz
-            npm install --production
-            npm start
-            ```
-            
-            ---
-            
-            **完整文档**: [README.md](https://github.com/${{ github.repository }})
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
@@ -222,17 +203,3 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Notify release
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const version = context.ref.replace('refs/tags/', '');
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🎉 版本 ${version} 已发布`,
-              body: `版本 ${version} 已成功编译并发布！\n\n查看发布详情: https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/${version}`,
-              labels: ['release', 'automated']
-            });
-
