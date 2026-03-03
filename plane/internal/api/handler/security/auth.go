@@ -95,10 +95,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	/* 更新最后登录时间 */
-	h.userSvc.UpdateLastLogin(user.ID)
-
-	/* 生成 JWT 令牌 */
+	/* 生成 JWT 令牌（last_login 已在 Authenticate 内部更新） */
 	token, err := middleware.GenerateJWT(
 		user.ID,
 		user.Username,
