@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"gkipass/plane/internal/db/dao"
+	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/pkg/logger"
 
 	"go.uber.org/zap"
@@ -62,6 +63,12 @@ func (s *CleanupService) runCleanup() {
 
 	// 3. 重置流量（如果到达重置时间）
 	s.resetTrafficIfNeeded()
+
+	// 4. 清理过期加密密钥
+	s.cleanupExpiredKeys()
+
+	// 5. 清理旧监控数据（保留 7 天）
+	s.cleanupOldMonitoringData()
 }
 
 /* cleanupExpiredSubscriptions 清理过期订阅 */
@@ -88,4 +95,35 @@ func (s *CleanupService) cleanupInactiveTunnels() {
 // resetTrafficIfNeeded 重置流量（如果到达重置时间）
 func (s *CleanupService) resetTrafficIfNeeded() {
 	logger.Debug("检查流量重置...")
+}
+
+/* cleanupExpiredKeys 清理过期的隧道加密密钥 */
+func (s *CleanupService) cleanupExpiredKeys() {
+	result := s.dao.DB.
+		Where("expires_at < ? AND active = ?", time.Now(), false).
+		Delete(&TunnelEncryptionKey{})
+
+	if result.Error != nil {
+		logger.Error("清理过期密钥失败", zap.Error(result.Error))
+		return
+	}
+	if result.RowsAffected > 0 {
+		logger.Info("已清理过期加密密钥", zap.Int64("count", result.RowsAffected))
+	}
+}
+
+/* cleanupOldMonitoringData 清理 7 天前的旧监控数据 */
+func (s *CleanupService) cleanupOldMonitoringData() {
+	cutoff := time.Now().AddDate(0, 0, -7)
+	result := s.dao.DB.
+		Where("created_at < ?", cutoff).
+		Delete(&models.NodeMonitoringData{})
+
+	if result.Error != nil {
+		logger.Error("清理旧监控数据失败", zap.Error(result.Error))
+		return
+	}
+	if result.RowsAffected > 0 {
+		logger.Info("已清理旧监控数据", zap.Int64("count", result.RowsAffected))
+	}
 }
