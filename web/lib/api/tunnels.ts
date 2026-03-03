@@ -19,4 +19,7 @@ export const tunnelApi = {
 
   toggle: (id: string, enabled: boolean) =>
     apiPost<Tunnel>(`/tunnels/${id}/toggle`, { enabled }),
+
+  batchToggle: (ids: string[], enabled: boolean) =>
+    apiPost<{ total: number; success: number; action: string }>("/tunnels/batch-toggle", { ids, enabled }),
 }
