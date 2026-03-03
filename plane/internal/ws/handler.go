@@ -15,6 +15,20 @@ import (
 	"go.uber.org/zap"
 )
 
+/*
+WebSocket 超时常量
+pongWait: 等待客户端 Pong 响应的最长时间（超时则认为连接断开）
+pingPeriod: 发送 Ping 的间隔（必须小于 pongWait）
+writeWait: 单次写操作超时
+maxMessageSize: 单条消息最大字节数
+*/
+const (
+	pongWait       = 90 * time.Second
+	pingPeriod     = 30 * time.Second
+	writeWait      = 10 * time.Second
+	maxMessageSize = 512 << 10 /* 512KB */
+)
+
 // Handler WebSocket 消息处理器
 type Handler struct {
 	manager           *Manager
@@ -91,15 +105,14 @@ func (h *Handler) readPump(conn *NodeConnection) {
 		conn.Close()
 	}()
 
-	/* 限制单条消息最大 512KB，防止超大消息导致 OOM */
-	conn.Conn.SetReadLimit(512 << 10)
+	conn.Conn.SetReadLimit(maxMessageSize)
 
-	if err := conn.Conn.SetReadDeadline(time.Now().Add(90 * time.Second)); err != nil {
+	if err := conn.Conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
 		logger.Error("设置读取超时失败", zap.Error(err))
 		return
 	}
 	conn.Conn.SetPongHandler(func(string) error {
-		if err := conn.Conn.SetReadDeadline(time.Now().Add(90 * time.Second)); err != nil {
+		if err := conn.Conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
 			logger.Error("设置读取超时失败", zap.Error(err))
 		}
 		conn.UpdateLastSeen()
@@ -125,7 +138,7 @@ func (h *Handler) readPump(conn *NodeConnection) {
 
 // writePump 发送消息
 func (h *Handler) writePump(conn *NodeConnection) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
 		conn.Close()
@@ -134,7 +147,7 @@ func (h *Handler) writePump(conn *NodeConnection) {
 	for {
 		select {
 		case msg, ok := <-conn.Send:
-			if err := conn.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			if err := conn.Conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 				logger.Error("设置写入超时失败", zap.Error(err))
 				return
 			}
@@ -152,7 +165,7 @@ func (h *Handler) writePump(conn *NodeConnection) {
 
 		case <-ticker.C:
 			// 发送 Ping
-			if err := conn.Conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			if err := conn.Conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 				logger.Error("设置写入超时失败", zap.Error(err))
 				return
 			}
