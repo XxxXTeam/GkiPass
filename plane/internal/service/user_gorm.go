@@ -122,13 +122,32 @@ func ValidateUsername(username string) error {
 	return nil
 }
 
+/* disposableEmailDomains 临时邮箱域名黑名单（常见一次性邮箱服务） */
+var disposableEmailDomains = map[string]bool{
+	"tempmail.com": true, "throwaway.email": true, "guerrillamail.com": true,
+	"mailinator.com": true, "yopmail.com": true, "10minutemail.com": true,
+	"trashmail.com": true, "fakeinbox.com": true, "sharklasers.com": true,
+	"grr.la": true, "guerrillamailblock.com": true, "dispostable.com": true,
+}
+
 /*
 ValidateEmail 校验邮箱格式
+功能：验证邮箱正则格式 + 拒绝临时邮箱域名
 */
 func ValidateEmail(email string) error {
 	if !emailRegex.MatchString(email) {
 		return fmt.Errorf("邮箱格式无效")
 	}
+
+	/* 提取域名并检查黑名单 */
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) == 2 {
+		domain := strings.ToLower(parts[1])
+		if disposableEmailDomains[domain] {
+			return fmt.Errorf("不支持使用临时邮箱注册")
+		}
+	}
+
 	return nil
 }
 
