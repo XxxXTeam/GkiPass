@@ -68,6 +68,7 @@ type NodeRegisterResponse struct {
 type HeartbeatRequest struct {
 	NodeID      string  `json:"node_id"`
 	Status      string  `json:"status"`       // online/busy/offline
+	Version     string  `json:"version"`      // 节点版本号
 	CPUUsage    float64 `json:"cpu_usage"`    // CPU使用率 0-100
 	MemoryUsage int64   `json:"memory_usage"` // 内存使用(bytes)
 	Connections int     `json:"connections"`  // 当前连接数

@@ -234,8 +234,19 @@ func (h *Handler) handleHeartbeat(conn *NodeConnection, msg *Message) {
 		if err != nil || ndNode == nil {
 			logger.Debug("心跳对应节点不存在", zap.String("nodeID", nodeID))
 		} else {
+			/* 版本号不匹配告警 */
+			if req.Version != "" && ndNode.Version != "" && req.Version != ndNode.Version {
+				logger.Warn("节点版本号不匹配",
+					zap.String("nodeID", nodeID),
+					zap.String("expected", ndNode.Version),
+					zap.String("reported", req.Version))
+			}
+
 			ndNode.Status = models.NodeStatus(req.Status)
 			ndNode.LastOnline = time.Now()
+			if req.Version != "" {
+				ndNode.Version = req.Version
+			}
 			h.dao.UpdateNode(ndNode)
 		}
 	}
