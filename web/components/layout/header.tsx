@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { useUser } from "@/lib/user-context"
 import { usePathname } from "next/navigation"
-import { Moon, Sun, Bell, User, LogOut, Settings, Check } from "lucide-react"
+import { Moon, Sun, Bell, User, LogOut, Settings, Check, Wifi, WifiOff } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
 import { SidebarTrigger } from "@/components/ui/sidebar"
@@ -52,6 +52,7 @@ export function Header() {
   const pathname = usePathname()
   const { user } = useUser()
   const [notifications, setNotifications] = useState<Notification[]>([])
+  const [apiOnline, setApiOnline] = useState(true)
 
   const username = user?.username || ""
   const unreadCount = notifications.filter((n) => !n.read).length
@@ -64,6 +65,16 @@ export function Header() {
 
   useEffect(() => {
     fetchNotifications()
+
+    /* 每 30 秒检测 API 可达性 */
+    const checkApi = () => {
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/health`)
+        .then((r) => setApiOnline(r.ok))
+        .catch(() => setApiOnline(false))
+    }
+    checkApi()
+    const healthTimer = setInterval(checkApi, 30000)
+    return () => clearInterval(healthTimer)
   }, [fetchNotifications])
 
   const handleMarkAllRead = async () => {
@@ -93,6 +104,15 @@ export function Header() {
           </span>
         ))}
       </nav>
+
+      {/* API 连接状态 */}
+      <div className="flex items-center gap-1.5 ml-2" title={apiOnline ? "API 连接正常" : "API 连接断开"}>
+        {apiOnline ? (
+          <Wifi className="h-3.5 w-3.5 text-green-500" />
+        ) : (
+          <WifiOff className="h-3.5 w-3.5 text-destructive animate-pulse" />
+        )}
+      </div>
 
       <div className="flex-1" />
 
