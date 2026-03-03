@@ -133,6 +133,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 				users.GET("/me", userHandler.GetCurrentUser)              // 获取当前用户完整信息
 				users.GET("/permissions", userHandler.GetUserPermissions) // 获取用户权限详情
 				users.GET("/profile", userHandler.GetProfile)             // 获取基本信息（保留兼容）
+				users.POST("/profile/update", userHandler.UpdateProfile)
 				users.POST("/password/update", userHandler.UpdatePassword)
 
 				// 管理员功能

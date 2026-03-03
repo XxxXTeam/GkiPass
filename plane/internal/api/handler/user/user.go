@@ -6,6 +6,7 @@ import (
 
 	"gkipass/plane/internal/api/middleware"
 	"gkipass/plane/internal/api/response"
+	"gkipass/plane/internal/db/models"
 	"gkipass/plane/internal/service"
 	"gkipass/plane/internal/types"
 
@@ -140,6 +141,50 @@ func (h *UserHandler) GetProfile(c *gin.Context) {
 		"created_at": user.CreatedAt,
 		"last_login": user.LastLogin,
 	})
+}
+
+/*
+UpdateProfileRequest 更新个人资料请求
+*/
+type UpdateProfileRequest struct {
+	Avatar      string `json:"avatar" binding:"max=512"`
+	Description string `json:"description" binding:"max=512"`
+}
+
+/*
+UpdateProfile 更新个人资料
+功能：更新用户头像和描述信息
+路由：POST /api/v1/users/profile/update
+*/
+func (h *UserHandler) UpdateProfile(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	var req UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.GinBadRequest(c, "请求参数无效: "+err.Error())
+		return
+	}
+
+	updates := map[string]interface{}{}
+	if req.Avatar != "" {
+		updates["avatar"] = req.Avatar
+	}
+	if req.Description != "" {
+		updates["description"] = req.Description
+	}
+
+	if len(updates) == 0 {
+		response.GinBadRequest(c, "没有需要更新的字段")
+		return
+	}
+
+	if err := h.app.DAO.DB.Model(&models.User{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
+		h.logger.Error("更新个人资料失败", zap.String("userID", userID), zap.Error(err))
+		response.GinInternalError(c, "更新个人资料失败", err)
+		return
+	}
+
+	response.GinSuccessWithMessage(c, "个人资料已更新", nil)
 }
 
 /*
