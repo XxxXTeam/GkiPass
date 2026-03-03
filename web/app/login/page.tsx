@@ -118,6 +118,7 @@ function LoginForm() {
                     placeholder="请输入用户名"
                     className="pl-9"
                     autoComplete="username"
+                    autoFocus
                   />
                 </div>
               </div>
