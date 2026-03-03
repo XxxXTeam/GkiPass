@@ -263,6 +263,7 @@ func SetupRouter(app *App, wsServer *ws.Server) *gin.Engine {
 				tunnels.POST("/:id/update", tunnelHandler.Update)
 				tunnels.POST("/:id/delete", tunnelHandler.Delete)
 				tunnels.POST("/:id/toggle", tunnelHandler.Toggle)
+				tunnels.POST("/batch-toggle", middleware.AdminAuth(), tunnelHandler.BatchToggle)
 			}
 
 			// 统计和监控

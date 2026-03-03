@@ -179,3 +179,49 @@ func (h *GinTunnelHandler) Toggle(c *gin.Context) {
 
 	response.GinSuccess(c, tunnel)
 }
+
+/*
+BatchToggle 批量切换隧道启用/禁用状态
+路由：POST /api/v1/tunnels/batch-toggle
+*/
+func (h *GinTunnelHandler) BatchToggle(c *gin.Context) {
+	var req struct {
+		IDs     []string `json:"ids" binding:"required"`
+		Enabled bool     `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.GinBadRequest(c, "无效的请求数据")
+		return
+	}
+	if len(req.IDs) == 0 {
+		response.GinBadRequest(c, "请选择至少一个隧道")
+		return
+	}
+	if len(req.IDs) > 100 {
+		response.GinBadRequest(c, "批量操作最多 100 个")
+		return
+	}
+
+	var successCount int
+	for _, id := range req.IDs {
+		if _, err := h.tunnelSvc.ToggleTunnel(id, req.Enabled); err == nil {
+			successCount++
+		}
+	}
+
+	action := "禁用"
+	if req.Enabled {
+		action = "启用"
+	}
+	h.logger.Info("批量切换隧道状态",
+		zap.String("action", action),
+		zap.Int("total", len(req.IDs)),
+		zap.Int("success", successCount),
+		zap.String("operator", middleware.GetUserID(c)))
+
+	response.GinSuccess(c, gin.H{
+		"total":   len(req.IDs),
+		"success": successCount,
+		"action":  action,
+	})
+}
