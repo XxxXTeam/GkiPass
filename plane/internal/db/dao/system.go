@@ -104,9 +104,7 @@ func (d *DAO) ListAnnouncements(page, pageSize int) ([]models.Announcement, int6
 	d.DB.Model(&models.Announcement{}).Count(&total)
 
 	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
-	}
+	pageSize, offset = SanitizePagination(pageSize, offset, 200)
 	if err := d.DB.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&announcements).Error; err != nil {
 		return nil, 0, err
 	}
@@ -161,9 +159,7 @@ func (d *DAO) ListNotifications(userID string, page, pageSize int) ([]models.Not
 	q.Count(&total)
 
 	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
-	}
+	pageSize, offset = SanitizePagination(pageSize, offset, 200)
 	if err := q.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&notifications).Error; err != nil {
 		return nil, 0, err
 	}

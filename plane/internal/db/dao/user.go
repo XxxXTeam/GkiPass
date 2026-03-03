@@ -83,9 +83,7 @@ func (d *DAO) ListUsers(page, pageSize int) ([]models.User, int64, error) {
 	d.DB.Model(&models.User{}).Count(&total)
 
 	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
-	}
+	pageSize, offset = SanitizePagination(pageSize, offset, 200)
 	if err := d.DB.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&users).Error; err != nil {
 		return nil, 0, err
 	}

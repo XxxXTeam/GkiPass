@@ -137,9 +137,7 @@ func (d *DAO) ListOrders(userID string, page, pageSize int) ([]models.Order, int
 	q.Count(&total)
 
 	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
-	}
+	pageSize, offset = SanitizePagination(pageSize, offset, 200)
 	if err := q.Order("created_at DESC").Offset(offset).Limit(pageSize).Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
