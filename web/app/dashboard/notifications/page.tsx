@@ -45,7 +45,16 @@ export default function NotificationsPage() {
     } catch { toast.error("删除失败") }
   }
 
+  const handleClearRead = async () => {
+    try {
+      await notificationApi.clearRead()
+      setNotifications((prev) => prev.filter((n) => !n.read))
+      toast.success("已清除已读通知")
+    } catch { toast.error("清除失败") }
+  }
+
   const unreadCount = notifications.filter((n) => !n.read).length
+  const readCount = notifications.filter((n) => n.read).length
 
   const typeColorMap: Record<string, string> = {
     info: "bg-blue-500",
@@ -63,11 +72,18 @@ export default function NotificationsPage() {
             {unreadCount > 0 ? `${unreadCount} 条未读通知` : "暂无未读通知"}
           </p>
         </div>
-        {unreadCount > 0 && (
-          <Button variant="outline" size="sm" onClick={handleMarkAllAsRead}>
-            <CheckCheck className="mr-2 h-4 w-4" /> 全部已读
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {readCount > 0 && (
+            <Button variant="outline" size="sm" onClick={handleClearRead}>
+              <Trash2 className="mr-2 h-4 w-4" /> 清除已读
+            </Button>
+          )}
+          {unreadCount > 0 && (
+            <Button variant="outline" size="sm" onClick={handleMarkAllAsRead}>
+              <CheckCheck className="mr-2 h-4 w-4" /> 全部已读
+            </Button>
+          )}
+        </div>
       </div>
 
       <Card>
