@@ -15,7 +15,7 @@ require (
 	github.com/quic-go/quic-go v0.59.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/wenlng/go-captcha-assets v1.0.7
-	github.com/wenlng/go-captcha/v2 v2.0.4
+	github.com/wenlng/go-captcha/v2 v2.0.5
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
 	golang.org/x/oauth2 v0.35.0
